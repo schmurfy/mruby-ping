@@ -3,6 +3,7 @@
 #include "mruby/data.h"
 #include "mruby/array.h"
 #include "mruby/string.h"
+#include "mruby/hash.h"
 
 // #include <stdio.h>
 // #include <stdlib.h>

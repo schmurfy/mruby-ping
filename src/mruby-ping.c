@@ -112,6 +112,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   mrb_int timeout;
   int i, pos = 0;
   int sending_socket = st->icmp_sock;
+  struct timeval sent_at, received_at;
   
   
   // struct ip ip;
@@ -129,6 +130,8 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   
   packet_size = sizeof(icmp);
   // packet = (uint8_t *)mrb_malloc(mrb, packet_size);
+  
+  gettimeofday(&sent_at, NULL);
   
   // send each icmp echo request
   for(i = 0; i< st->addresses_count; i++){
@@ -158,8 +161,11 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   struct timeval tv;
   char *host;
   int wait_time = 0; // how much did we already wait
+  mrb_value key, ret_value;
   
   timeout *= 1000; // ms => usec
+  
+  ret_value = mrb_hash_new_capa(mrb, st->addresses_count);
   
   // we will receive both the ip header and the icmp data
   packet_size = sizeof(struct ip) + sizeof(struct icmp);
@@ -198,6 +204,14 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
         if (pkt->icmp_type == ICMP_ECHOREPLY){
           host = inet_ntoa(from.sin_addr);
           printf("got reply from %s !\n", host);
+          
+          gettimeofday(&received_at, NULL);
+          
+          key = mrb_str_buf_new(mrb, strlen(host));
+          // mrb_value mrb_str_buf_cat(mrb_state *mrb, mrb_value str, const char *ptr, size_t len);
+          mrb_str_buf_cat(mrb, key, host, strlen(host));
+          // void mrb_hash_set(mrb_state *mrb, mrb_value hash, mrb_value key, mrb_value val);
+          mrb_hash_set(mrb, ret_value, key, mrb_fixnum_value(((received_at.tv_sec - sent_at.tv_sec) * 1000000 + (received_at.tv_usec - sent_at.tv_usec))));
           // break;
         }
       }
@@ -220,7 +234,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   puts("out");
 
   
-  return self;
+  return ret_value;
 }
 
 void mrb_mruby_ping_gem_init(mrb_state *mrb)
