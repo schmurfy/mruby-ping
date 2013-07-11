@@ -12,16 +12,12 @@
 #include <netdb.h>
 #include <errno.h>
 
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-
-#include <netinet/in_systm.h>
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <netinet/udp.h>
-#include <netinet/ip_icmp.h>
-#include <netinet/tcp.h>
-
 #include <arpa/inet.h>
+
+
+// shared
+void ping_set_targets_common(mrb_state *mrb, mrb_value arr, const uint16_t *addresses_count, in_addr_t *addresses);
+
+// init
+void mruby_ping_init_icmp(mrb_state *);
+void mruby_ping_init_arp(mrb_state *);
