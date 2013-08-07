@@ -187,7 +187,6 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
 
     ret = select(st->icmp_sock + 1, &rfds, NULL, NULL, &tv);
     if( ret == -1 ){
-      printf("err: %d\n", errno);
       perror("select");
     }
     
@@ -200,7 +199,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
         continue;
       }
       
-      printf("recv(%d, %ld, %ld)\n", c, sizeof(struct ip) + sizeof(struct icmp), packet_size);
+      // printf("recv(%d, %ld, %ld)\n", c, sizeof(struct ip) + sizeof(struct icmp), packet_size);
           
       if (c >= sizeof(struct ip) + sizeof(struct icmp)) {
         struct ip *iphdr = (struct ip *) packet;
@@ -208,7 +207,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
         pkt = (struct icmp *) (packet + (iphdr->ip_hl << 2));      /* skip ip hdr */
         if (pkt->icmp_type == ICMP_ECHOREPLY){
           host = inet_ntoa(from.sin_addr);
-          printf("got reply from %s !\n", host);
+          // printf("got reply from %s !\n", host);
           
           gettimeofday(&received_at, NULL);
           
@@ -229,14 +228,10 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       // printf("%d %ld, %d\n", ret, tv.tv_sec, tv.tv_usec);
     }
     
-    if( wait_time >= timeout ){
-      puts("timed out");
+    if( wait_time >= timeout )
       break;
-    }
         
   }
-  
-  puts("out");
 
   
   return ret_value;
