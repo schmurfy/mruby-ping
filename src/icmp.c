@@ -114,21 +114,19 @@ static void fill_timeout(struct timeval *tv, uint64_t duration)
 static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
 {
   struct state *st = DATA_PTR(self);
-  mrb_int timeout;
+  mrb_int count = 0, timeout;
+  mrb_value ret_value;
   int i, pos = 0;
   int sending_socket = st->icmp_sock;
   struct timeval sent_at, received_at;
   
-  
-  // struct ip ip;
   struct icmp icmp;
-  // int sd, pos = 0;
-  // const int on = 1;
-  struct sockaddr_in dst_addr;
   uint8_t packet[sizeof(struct ip) + sizeof(struct icmp)];
   size_t packet_size;
     
-  mrb_get_args(mrb, "i", &timeout);
+  mrb_get_args(mrb, "i|i", &timeout, &count);
+  
+  if( count == 0 ) count = 1;
   
   if( timeout <= 0 )
     mrb_raisef(mrb, E_TYPE_ERROR, "timeout should be positive and non null: %d", timeout);
@@ -138,24 +136,39 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   
   gettimeofday(&sent_at, NULL);
   
+  ret_value = mrb_hash_new_capa(mrb, st->addresses_count);
+  
   // send each icmp echo request
   for(i = 0; i< st->addresses_count; i++){
+    int j;
+    mrb_value key, arr;
+    struct sockaddr_in dst_addr;
+    
     // prepare destination address
     bzero(&dst_addr, sizeof(dst_addr));
     dst_addr.sin_family = AF_INET;
     dst_addr.sin_addr.s_addr = st->addresses[i];
     
+    key = mrb_str_new_cstr(mrb, inet_ntoa(dst_addr.sin_addr));
+    arr = mrb_ary_new_capa(mrb, count);
+    mrb_hash_set(mrb, ret_value, key, arr);
     
     icmp.icmp_type = ICMP_ECHO;
     icmp.icmp_code = 0;
-    icmp.icmp_id = 1000;
-    icmp.icmp_seq = 0;
-    icmp.icmp_cksum = 0;
-    icmp.icmp_cksum = in_cksum((uint16_t *)&icmp, sizeof(icmp));
-    memcpy(packet + pos, &icmp, sizeof(icmp));
+    icmp.icmp_id = 0xFFFF;
     
-    if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
-      mrb_raise(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet");
+    for(j = 0; j< count; j++){
+      mrb_ary_set(mrb, arr, j, mrb_nil_value());
+      
+      icmp.icmp_seq = htons(j);
+      icmp.icmp_cksum = 0;
+      icmp.icmp_cksum = in_cksum((uint16_t *)&icmp, sizeof(icmp));
+      
+      memcpy(packet + pos, &icmp, sizeof(icmp));
+      
+      if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
+        mrb_raise(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet");
+      }
     }
 
   }
@@ -166,11 +179,9 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   struct timeval tv;
   char *host;
   int wait_time = 0; // how much did we already wait
-  mrb_value key, ret_value;
+  
   
   timeout *= 1000; // ms => usec
-  
-  ret_value = mrb_hash_new_capa(mrb, st->addresses_count);
   
   // we will receive both the ip header and the icmp data
   packet_size = sizeof(struct ip) + sizeof(struct icmp);
@@ -203,20 +214,20 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
           
       if (c >= sizeof(struct ip) + sizeof(struct icmp)) {
         struct ip *iphdr = (struct ip *) packet;
+        mrb_value key, value;
         
         pkt = (struct icmp *) (packet + (iphdr->ip_hl << 2));      /* skip ip hdr */
-        if (pkt->icmp_type == ICMP_ECHOREPLY){
+        if( (pkt->icmp_type == ICMP_ECHOREPLY) && (pkt->icmp_id == 0xFFFF)){
+          uint32_t seq = ntohs(pkt->icmp_seq);
+          mrb_value latency;
           host = inet_ntoa(from.sin_addr);
-          // printf("got reply from %s !\n", host);
           
           gettimeofday(&received_at, NULL);
           
-          key = mrb_str_buf_new(mrb, strlen(host));
-          // mrb_value mrb_str_buf_cat(mrb_state *mrb, mrb_value str, const char *ptr, size_t len);
-          mrb_str_buf_cat(mrb, key, host, strlen(host));
-          // void mrb_hash_set(mrb_state *mrb, mrb_value hash, mrb_value key, mrb_value val);
-          mrb_hash_set(mrb, ret_value, key, mrb_fixnum_value(((received_at.tv_sec - sent_at.tv_sec) * 1000000 + (received_at.tv_usec - sent_at.tv_usec))));
-          // break;
+          key = mrb_str_new_cstr(mrb, host);
+          value = mrb_hash_get(mrb, ret_value, key);
+          latency = mrb_fixnum_value(((received_at.tv_sec - sent_at.tv_sec) * 1000000 + (received_at.tv_usec - sent_at.tv_usec)));
+          mrb_ary_set(mrb, value, seq, latency);
         }
       }
     }
@@ -246,7 +257,7 @@ void mruby_ping_init_icmp(mrb_state *mrb)
   
   mrb_define_method(mrb, class, "initialize", ping_initialize,  ARGS_NONE());
   mrb_define_method(mrb, class, "set_targets", ping_set_targets,  ARGS_REQ(1));
-  mrb_define_method(mrb, class, "send_pings", ping_send_pings,  ARGS_REQ(1));
+  mrb_define_method(mrb, class, "_send_pings", ping_send_pings,  ARGS_REQ(1));
     
   mrb_gc_arena_restore(mrb, ai);
 }
