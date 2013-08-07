@@ -37,6 +37,8 @@ static struct mrb_data_type arp_ping_state_type = { "ARPPinger", arp_state_free 
 
 static uint8_t broadcast_mac_addr[8] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 
+#define ERRLN(FORMAT, ARGS...) { printf(FORMAT, ## ARGS); libnet_clear_packet(pnet); return -1; }
+
 static int arp_send(
   libnet_t    *pnet,
   int          opcode,
@@ -46,36 +48,35 @@ static int arp_send(
   in_addr_t    target_address)
 {
   int retval = -1;
-
-  if( source_hardware != NULL || ( source_hardware = (uint8_t *)libnet_get_hwaddr( pnet ) ) != NULL )
-  {
-    if( source_address != 0 || ( source_address = libnet_get_ipaddr4( pnet ) ) != -1 )
-    {
-      if( target_hardware == NULL )
-        target_hardware = broadcast_mac_addr;
-
-      if( libnet_autobuild_arp( opcode, source_hardware, (uint8_t *)&source_address, target_hardware, (uint8_t *)&target_address, pnet ) != -1 )
-      {
-        if( libnet_build_ethernet( target_hardware, source_hardware, ETHERTYPE_ARP, NULL, 0, pnet, 0 ) != -1 )
-        {
-          retval = libnet_write( pnet );
-          if( retval == -1 ){
-            printf( "error sending packet : %s\n", libnet_geterror( pnet ) );
-          }
-          
-          libnet_clear_packet( pnet );
-        }
-        else
-          printf( "error building ethernet packet : %s\n", libnet_geterror( pnet ) );
-      }
-      else
-        printf( "error building arp packet : %s\n", libnet_geterror( pnet ) );
-    }
-    else
-      printf( "error obtaining source address : %s\n", libnet_geterror( pnet ) );
+  
+  if( source_hardware == NULL ){
+    source_hardware = (uint8_t *) libnet_get_hwaddr(pnet);
+    if( source_hardware == NULL )
+      ERRLN("error obtaining source hardware address : %s\n", libnet_geterror( pnet ));
   }
-  else
-    printf( "error obtaining source hardware address : %s\n", libnet_geterror( pnet ) );
+  
+  if( source_address == 0 ){
+    source_address = libnet_get_ipaddr4(pnet);
+    if( source_address == 0 )
+      ERRLN("error obtaining source address : %s\n", libnet_geterror( pnet ));
+  }
+  
+  if( target_hardware == NULL ){
+    target_hardware = broadcast_mac_addr;
+  }
+  
+  if( libnet_autobuild_arp( opcode, source_hardware, (uint8_t *)&source_address, target_hardware, (uint8_t *)&target_address, pnet ) == -1 )
+    ERRLN("error building arp packet : %s\n", libnet_geterror(pnet));
+  
+  if( libnet_build_ethernet( target_hardware, source_hardware, ETHERTYPE_ARP, NULL, 0, pnet, 0 ) == -1 )
+    ERRLN("error building ethernet packet : %s\n", libnet_geterror( pnet ));
+  
+
+  retval = libnet_write( pnet );
+  if( retval == -1 )
+    ERRLN( "error sending packet : %s\n", libnet_geterror( pnet ) );
+  
+  libnet_clear_packet( pnet );
 
   return retval;
 }
@@ -122,17 +123,15 @@ static void pcap_packet_handler(uint8_t *args_ptr, const struct pcap_pkthdr *h, 
   
   // check packet type and source (ignore packet from us)
   if( (ntohs(heth->ether_type) == ETHERTYPE_ARP) && (ntohs(harp->ar_op) == ARPOP_REPLY) ){
-    printf("arp from %02x:%02x:%02x:%02x:%02x:%02x\n",
-        ether_src[0], ether_src[1], ether_src[2], ether_src[3], ether_src[4], ether_src[5]
-      );
+    // printf("arp from %02x:%02x:%02x:%02x:%02x:%02x\n",
+    //     ether_src[0], ether_src[1], ether_src[2], ether_src[3], ether_src[4], ether_src[5]
+    //   );
     
     if( !same_ether(ether_src, myaddr->ether_addr_octet) ){
       // printf("ip: %s, target: %s ? %d\n", inet_ntoa( *((struct in_addr *) &ip) ), target_address, strcmp( inet_ntoa( *((struct in_addr *) &ip) ), target_address) );
       // memcpy(&ip, (char*)harp + LIBNET_ARP_H + (harp->ar_hln * 2) + harp->ar_pln, 4);
       memcpy(&ip, (char*)harp + LIBNET_ARP_H + harp->ar_hln, 4);
       host = inet_ntoa( *((struct in_addr *) &ip));
-      
-      printf("receved reply for ip %s\n", host );
       
       key = mrb_str_buf_new(args->mrb, strlen(host));
       mrb_str_buf_cat(args->mrb, key, host, strlen(host));
@@ -188,10 +187,9 @@ static mrb_value receive_replies(mrb_state *mrb, mrb_value self, const struct ar
     
     gettimeofday(&received_at, NULL);
     elapsed = ((received_at.tv_sec - sent_at.tv_sec) * 1000 + floor((received_at.tv_usec - sent_at.tv_usec) / 1000));
-    if( elapsed >= timeout ){
-      puts("timed out");
+    if( elapsed >= timeout )
       break;
-    }
+    
   }
   
   pcap_close(pcap);
