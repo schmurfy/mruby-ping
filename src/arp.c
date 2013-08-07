@@ -133,8 +133,7 @@ static void pcap_packet_handler(uint8_t *args_ptr, const struct pcap_pkthdr *h, 
       memcpy(&ip, (char*)harp + LIBNET_ARP_H + harp->ar_hln, 4);
       host = inet_ntoa( *((struct in_addr *) &ip));
       
-      key = mrb_str_buf_new(args->mrb, strlen(host));
-      mrb_str_buf_cat(args->mrb, key, host, strlen(host));
+      key = mrb_str_new_cstr(args->mrb, host);
       mrb_hash_set(args->mrb, *args->ret, key, mrb_true_value());
     }
     
