@@ -11,10 +11,16 @@
 #include <netinet/tcp.h>
 
 #include <arpa/inet.h>
+#include <fcntl.h>
 
 
 #include "mruby-ping.h"
 
+
+struct ping_status {
+  in_addr_t addr;
+  struct timeval sent_at, received_at;
+};
 
 struct state {
   int icmp_sock;
@@ -61,6 +67,7 @@ static struct mrb_data_type ping_state_type = { "Pinger", ping_state_free };
 
 static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
 {
+  int flags;
   struct state *st = mrb_malloc(mrb, sizeof(struct state));
   
   if ((st->raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) < 0) {
@@ -72,6 +79,21 @@ static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
     mrb_raise(mrb, E_RUNTIME_ERROR, "cannot create icmp socket, are you root ?");
     return mrb_nil_value();
   }
+  
+  // set the socket as non blocking
+  flags = fcntl(st->icmp_sock, F_GETFL);
+  if ( flags < 0){
+    mrb_raise(mrb, E_RUNTIME_ERROR, "fnctl(GET) failed");
+    return mrb_nil_value();
+  }
+  
+  flags |= O_NONBLOCK;
+  
+  if (fcntl(st->icmp_sock, F_SETFL, flags) < 0){
+    mrb_raise(mrb, E_RUNTIME_ERROR, "fnctl(SET) failed");
+    return mrb_nil_value();
+  }
+
   
   st->addresses = NULL;
   
@@ -167,12 +189,13 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       memcpy(packet + pos, &icmp, sizeof(icmp));
       
       if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
-        mrb_raise(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet");
+        mrb_raisef(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet, errno: %d", errno);
       }
     }
 
   }
   
+    
   // and collect answers
   int c, ret;
   fd_set rfds;
@@ -202,32 +225,36 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     }
     
     if( ret == 1 ){
-      c = recvfrom(st->icmp_sock, packet, packet_size, 0, (struct sockaddr *) &from, &fromlen);
-      if( c < 0 ) {
-        if (errno == EINTR)
-          continue;
-        mrb_raise(mrb, E_RUNTIME_ERROR, "ping: recvfrom");
-        continue;
-      }
-      
-      // printf("recv(%d, %ld, %ld)\n", c, sizeof(struct ip) + sizeof(struct icmp), packet_size);
+      while(1){
+        c = recvfrom(st->icmp_sock, packet, packet_size, 0, (struct sockaddr *) &from, &fromlen);
+        if( c < 0 ) {
+          if ((errno != EINTR) && (errno != EAGAIN)){
+            mrb_raise(mrb, E_RUNTIME_ERROR, "ping: recvfrom");
+          }
           
-      if (c >= sizeof(struct ip) + sizeof(struct icmp)) {
-        struct ip *iphdr = (struct ip *) packet;
-        mrb_value key, value;
+          break;
+        }
         
-        pkt = (struct icmp *) (packet + (iphdr->ip_hl << 2));      /* skip ip hdr */
-        if( (pkt->icmp_type == ICMP_ECHOREPLY) && (pkt->icmp_id == 0xFFFF)){
-          uint32_t seq = ntohs(pkt->icmp_seq);
-          mrb_value latency;
-          host = inet_ntoa(from.sin_addr);
+        if (c >= sizeof(struct ip) + sizeof(struct icmp)) {
+          struct ip *iphdr = (struct ip *) packet;
+          mrb_value key, value;
           
-          gettimeofday(&received_at, NULL);
-          
-          key = mrb_str_new_cstr(mrb, host);
-          value = mrb_hash_get(mrb, ret_value, key);
-          latency = mrb_fixnum_value(((received_at.tv_sec - sent_at.tv_sec) * 1000000 + (received_at.tv_usec - sent_at.tv_usec)));
-          mrb_ary_set(mrb, value, seq, latency);
+          pkt = (struct icmp *) (packet + (iphdr->ip_hl << 2));      /* skip ip hdr */
+          if( (pkt->icmp_type == ICMP_ECHOREPLY) && (pkt->icmp_id == 0xFFFF)){
+            printf("got reply after %d ms\n",
+                ((received_at.tv_sec - sent_at.tv_sec) * 1000 + (received_at.tv_usec - sent_at.tv_usec) / 1000)
+              );
+            uint32_t seq = ntohs(pkt->icmp_seq);
+            mrb_value latency;
+            host = inet_ntoa(from.sin_addr);
+            
+            gettimeofday(&received_at, NULL);
+            
+            key = mrb_str_new_cstr(mrb, host);
+            value = mrb_hash_get(mrb, ret_value, key);
+            latency = mrb_fixnum_value(((received_at.tv_sec - sent_at.tv_sec) * 1000000 + (received_at.tv_usec - sent_at.tv_usec)));
+            mrb_ary_set(mrb, value, seq, latency);
+          }
         }
       }
     }
