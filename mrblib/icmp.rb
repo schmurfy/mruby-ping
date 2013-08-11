@@ -1,6 +1,16 @@
 class ICMPPinger
-  def send_pings(timeout, count)
-    ret1 = _send_pings(timeout, count)
+  ##
+  # @param [Integer] timeout how much time to wait for the replies (in ms)
+  # @param [Integer] count how many icmp request to send
+  # @param [Integer] delay how much time to wait before each icmp request
+  def send_pings(timeout, count = 1, delay = 50)
+    
+    # sanity check
+    if( delay * count >= timeout )
+      raise "delay * count should be higher than timeout !"
+    end
+    
+    ret1 = _send_pings(timeout, count, delay)
     ret2 = {}
     
     # do the maths

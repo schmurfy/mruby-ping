@@ -235,7 +235,7 @@ static void *thread_icmp_reply_catcher(void *v)
 static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
 {
   struct state *st = DATA_PTR(self);
-  mrb_int count = 0, timeout;
+  mrb_int count, timeout, delay;
   mrb_value ret_value;
   int i, pos = 0;
   int sending_socket = st->icmp_sock;
@@ -249,10 +249,8 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   uint8_t packet[sizeof(struct ip) + sizeof(struct icmp)];
   size_t packet_size;
     
-  mrb_get_args(mrb, "i|i", &timeout, &count);
+  mrb_get_args(mrb, "iii", &timeout, &count, &delay);
   timeout *= 1000; // ms => usec
-  
-  if( count == 0 ) count = 1;
   
   if( timeout <= 0 ) {
     mrb_raisef(mrb, E_TYPE_ERROR, "timeout should be positive and non null: %d", timeout);
@@ -318,7 +316,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       }
       
       replies_index++;
-      usleep(50000);
+      usleep(delay * 1000);
     }
 
   }
