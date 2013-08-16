@@ -311,12 +311,15 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       
       memcpy(packet + pos, &icmp, sizeof(icmp));
       
+      replies_index++;
       if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
-        mrb_raisef(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet, errno: %d", errno);
+        perror("sendto");
+        // mrb_raisef(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet: %S", strerror(errno));
+      }
+      else {
+        usleep(delay * 1000);
       }
       
-      replies_index++;
-      usleep(delay * 1000);
     }
 
   }
