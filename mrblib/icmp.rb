@@ -3,7 +3,7 @@ class ICMPPinger
   # @param [Integer] timeout how much time to wait for the replies (in ms)
   # @param [Integer] count how many icmp request to send
   # @param [Integer] delay how much time to wait before each icmp request
-  def send_pings(timeout, count = 1, delay = 50)
+  def send_pings(timeout, count = 1, delay = 50, wanted_percentiles = [])
     
     # sanity check
     if( delay * count >= timeout )
@@ -25,9 +25,35 @@ class ICMPPinger
       end
       
       # [host, sum / latencies.size(), (loss / latencies.size()) * 100]
-      ret2[host] = [sum / latencies.size() / 1000, (loss / latencies.size()) * 100]
+      ret2[host] = [sum / latencies.size(), (loss / latencies.size()) * 100, {}]
+      unless wanted_percentiles.empty?
+        percentiles(latencies, wanted_percentiles).each do |arr|
+          p, val = *arr
+          ret2[host][-1][p] = val
+        end
+      end
+      
     end
     
     ret2
   end
+
+private
+  def percentiles(values, perc)
+    values_sorted = values.reject{|v| v == nil }
+    values_sorted.sort!
+    len = values_sorted.size
+    
+    if values_sorted.empty?
+      {}
+    else
+      perc.map do |p|
+        k = (p*(len-1)+1).floor - 1
+        f = (p*(len-1)+1) % 1
+
+        [p, values_sorted[k] + (f * (values_sorted[k+1] - values_sorted[k]))]
+      end
+    end
+  end
+    
 end
