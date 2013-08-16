@@ -214,7 +214,7 @@ static void *thread_icmp_reply_catcher(void *v)
       }
     }
     else {
-      printf("select ret = %d\n", ret);
+      // printf("select ret = %d\n", ret);
     }
     
     if( ret == 0 ){
