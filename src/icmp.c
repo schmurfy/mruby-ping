@@ -317,7 +317,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       
       replies_index++;
       if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
-        perror("sendto");
+        printf("sendto(dst: %s) error: %s\n", inet_ntoa(dst_addr.sin_addr), strerror(errno));
         // mrb_raisef(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet: %S", strerror(errno));
       }
       else {
