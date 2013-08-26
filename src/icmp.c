@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #define MALLOC(X) mrb_malloc(mrb, X);
+#define FREE(X) mrb_free(mrb, X);
 
 #include "mruby-ping.h"
 
@@ -57,7 +58,10 @@ static uint16_t in_cksum(uint16_t *addr, int len)
 static void ping_state_free(mrb_state *mrb, void *ptr)
 {
   struct state *st = (struct state *)ptr;
-  mrb_free(mrb, st);
+  if( st->addresses != NULL )
+    FREE(st->addresses);
+    
+  FREE(st);
 }
 
 static struct mrb_data_type ping_state_type = { "Pinger", ping_state_free };
@@ -132,11 +136,11 @@ static void fill_timeout(struct timeval *tv, uint64_t duration)
 }
 
 // return t2 - t1 in microseconds
-static mrb_int timediff(struct timeval *t1, struct timeval *t2)
-{
-  return (t2->tv_sec - t1->tv_sec) * 1000000 +
-  (t2->tv_usec - t1->tv_usec);
-}
+// static mrb_int timediff(struct timeval *t1, struct timeval *t2)
+// {
+//   return (t2->tv_sec - t1->tv_sec) * 1000000 +
+//   (t2->tv_usec - t1->tv_usec);
+// }
 
 
 struct ping_reply {
@@ -258,7 +262,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   
   if( timeout <= 0 ) {
     mrb_raisef(mrb, E_TYPE_ERROR, "timeout should be positive and non null: %d", timeout);
-    return mrb_nil_value();
+    goto error;
   }
   
   packet_size = sizeof(icmp);
@@ -277,7 +281,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   i = pthread_create(&reply_thread, NULL, thread_icmp_reply_catcher, &thread_args);
   if( i != 0 ){
     mrb_raisef(mrb, E_RUNTIME_ERROR, "thread creation failed: %d", i);
-    return mrb_nil_value();
+    goto free_replies;
   }
   
   // send each icmp echo request
@@ -347,8 +351,11 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       mrb_ary_set(mrb, value, replies[i].seq, mrb_fixnum_value(latency));
     }
   }
-
   
+free_replies:
+  FREE(replies);
+
+error:
   return ret_value;
 }
 
