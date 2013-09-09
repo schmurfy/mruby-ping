@@ -15,8 +15,14 @@
 #include <arpa/inet.h>
 
 
+
+struct target_address {
+  in_addr_t in_addr;
+  u_int     rtable;
+};
+
 // shared
-void ping_set_targets_common(mrb_state *mrb, mrb_value arr, const uint16_t *addresses_count, in_addr_t *addresses);
+void ping_set_targets_common(mrb_state *mrb, mrb_value arr, const uint16_t *targets_count, struct target_address *targets);
 
 // init
 void mruby_ping_init_icmp(mrb_state *);

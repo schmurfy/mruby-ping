@@ -1,9 +1,30 @@
 class ICMPPinger
+  
+  def initialize
+    internal_init()
+    
+    @targets = []
+    @init_done = false
+  end
+  
+  def add_target(addr, opts = {})
+    @targets << [addr, opts.delete(:routing_table) || 0]
+  end
+  
+  def clear_targets
+    @init_done = false
+    _clear_targets()
+  end
+  
   ##
   # @param [Integer] timeout how much time to wait for the replies (in ms)
   # @param [Integer] count how many icmp request to send
   # @param [Integer] delay how much time to wait before each icmp request
   def send_pings(timeout, count = 1, delay = 50, wanted_percentiles = [])
+    unless @init_done
+      _set_targets(@targets)
+      @init_done = true
+    end
     
     # sanity check
     if( delay * count >= timeout )

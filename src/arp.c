@@ -17,8 +17,8 @@ static pcap_t *pcap;
 struct arp_state {
   libnet_t *ctx;
   
-  in_addr_t *addresses;
-  uint16_t addresses_count;
+  struct target_address *targets;
+  uint16_t targets_count;
 };
 
 static void arp_state_free(mrb_state *mrb, void *ptr)
@@ -91,7 +91,7 @@ struct pcap_loop_args {
 };
 
 //
-// return 1 if the two mac addresses are identical
+// return 1 if the two mac targets are identical
 //
 static int same_ether(const uint8_t *mac1, const uint8_t *mac2)
 {
@@ -177,7 +177,7 @@ static mrb_value receive_replies(mrb_state *mrb, mrb_value self, const struct ar
   loop_args.mrb = mrb;
   loop_args.ret = &ret_value;
   
-  ret_value = mrb_hash_new_capa(mrb, st->addresses_count);
+  ret_value = mrb_hash_new_capa(mrb, st->targets_count);
   
   while(1){
     if( pcap_dispatch(pcap, 200, pcap_packet_handler, (uint8_t *)&loop_args) == -1 ){
@@ -216,7 +216,7 @@ static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
   if( st->ctx == NULL )
     ERRF("Failed to initialize libnet: %s", error_buffer);
   
-  st->addresses = NULL;
+  st->targets = NULL;
   
   DATA_PTR(self)  = (void*)st;
   DATA_TYPE(self) = &arp_ping_state_type;
@@ -232,14 +232,14 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
   
   mrb_get_args(mrb, "A", &arr);
   
-  if( st->addresses != NULL ){
-    mrb_free(mrb, st->addresses);
+  if( st->targets != NULL ){
+    mrb_free(mrb, st->targets);
   }
   
-  st->addresses_count = RARRAY_LEN(arr);
-  st->addresses = mrb_malloc(mrb, sizeof(in_addr_t) * st->addresses_count );
+  st->targets_count = RARRAY_LEN(arr);
+  st->targets = mrb_malloc(mrb, sizeof(struct target_address) * st->targets_count );
   
-  ping_set_targets_common(mrb, arr, &st->addresses_count, st->addresses);
+  ping_set_targets_common(mrb, arr, &st->targets_count, st->targets);
   
   return self;
 }
@@ -254,8 +254,8 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   mrb_get_args(mrb, "i", &timeout);
   
   // send all arp requests
-  for(i = 0; i< st->addresses_count; i++){
-    arp_send(st->ctx, ARPOP_REQUEST, NULL, 0, NULL, st->addresses[i]);
+  for(i = 0; i< st->targets_count; i++){
+    arp_send(st->ctx, ARPOP_REQUEST, NULL, 0, NULL, st->targets[i].in_addr);
   }
   
   // and collect the replies

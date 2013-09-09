@@ -24,8 +24,8 @@
 struct state {
   int icmp_sock;
   int raw_sock;
-  in_addr_t *addresses;
-  uint16_t addresses_count;
+  struct target_address *targets;
+  uint16_t targets_count;
 };
 
 
@@ -58,8 +58,8 @@ static uint16_t in_cksum(uint16_t *addr, int len)
 static void ping_state_free(mrb_state *mrb, void *ptr)
 {
   struct state *st = (struct state *)ptr;
-  if( st->addresses != NULL )
-    FREE(st->addresses);
+  if( st->targets != NULL )
+    FREE(st->targets);
     
   FREE(st);
 }
@@ -97,7 +97,7 @@ static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
   }
 
   
-  st->addresses = NULL;
+  st->targets = NULL;
   
   DATA_PTR(self)  = (void*)st;
   DATA_TYPE(self) = &ping_state_type;
@@ -105,21 +105,41 @@ static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
   return self;
 }
 
+static mrb_value ping_clear_targets(mrb_state *mrb, mrb_value self)
+{
+  struct state *st = DATA_PTR(self);
+  
+  if( st->targets != NULL ){
+    mrb_free(mrb, st->targets);
+  }
+  
+  return self;
+}
+
 static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
 {
+  mrb_int n;
   mrb_value arr;
   struct state *st = DATA_PTR(self);
   
   mrb_get_args(mrb, "A", &arr);
+    
+  st->targets_count = RARRAY_LEN(arr);
+  st->targets = MALLOC(sizeof(struct target_address) * st->targets_count );
   
-  if( st->addresses != NULL ){
-    mrb_free(mrb, st->addresses);
+  for( n = 0; n< st->targets_count; n++ ){
+    mrb_value arr2 = mrb_ary_ref(mrb, arr, n);
+    mrb_value r_addr = mrb_ary_ref(mrb, arr2, 0);
+    mrb_value r_rtable = mrb_ary_ref(mrb, arr2, 1);
+    
+    if( !mrb_string_p(r_addr) ){
+      mrb_raisef(mrb, E_TYPE_ERROR, "can't convert %s into String", mrb_obj_classname(mrb, r_addr));
+    }
+    else {
+      st->targets[n].rtable = mrb_fixnum(r_rtable);
+      st->targets[n].in_addr = inet_addr( mrb_str_to_cstr(mrb, r_addr) );
+    }
   }
-  
-  st->addresses_count = RARRAY_LEN(arr);
-  st->addresses = MALLOC(sizeof(in_addr_t) * st->addresses_count );
-  
-  ping_set_targets_common(mrb, arr, &st->addresses_count, st->addresses);
   
   return self;
 }
@@ -267,11 +287,11 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   
   packet_size = sizeof(icmp);
   
-  ret_value = mrb_hash_new_capa(mrb, st->addresses_count);
+  ret_value = mrb_hash_new_capa(mrb, st->targets_count);
   
   // setup the receiver thread
-  replies = MALLOC(st->addresses_count * count * sizeof(struct ping_reply));
-  bzero(replies, st->addresses_count * count * sizeof(struct ping_reply));
+  replies = MALLOC(st->targets_count * count * sizeof(struct ping_reply));
+  bzero(replies, st->targets_count * count * sizeof(struct ping_reply));
   
   thread_args.state = st;
   thread_args.replies = replies;
@@ -285,7 +305,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   }
   
   // send each icmp echo request
-  for(i = 0; i< st->addresses_count; i++){
+  for(i = 0; i< st->targets_count; i++){
     int j;
     mrb_value key, arr;
     struct sockaddr_in dst_addr;
@@ -293,7 +313,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     // prepare destination address
     bzero(&dst_addr, sizeof(dst_addr));
     dst_addr.sin_family = AF_INET;
-    dst_addr.sin_addr.s_addr = st->addresses[i];
+    dst_addr.sin_addr.s_addr = st->targets[i].in_addr;
     
     key = mrb_str_new_cstr(mrb, inet_ntoa(dst_addr.sin_addr));
     arr = mrb_ary_new_capa(mrb, count);
@@ -318,6 +338,13 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       icmp.icmp_cksum = in_cksum((uint16_t *)&icmp, sizeof(icmp));
       
       memcpy(packet + pos, &icmp, sizeof(icmp));
+      
+    #ifdef __OpenBSD__
+      // force routing table
+      if (setsockopt(sending_socket, SOL_SOCKET, SO_RTABLE, &st->targets[i].rtable, sizeof(u_int)) == -1){
+        perror("setsockopt (rtable) ");
+      }
+    #endif
       
       replies_index++;
       if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
@@ -365,8 +392,9 @@ void mruby_ping_init_icmp(mrb_state *mrb)
   
   int ai = mrb_gc_arena_save(mrb);
   
-  mrb_define_method(mrb, class, "initialize", ping_initialize,  ARGS_NONE());
-  mrb_define_method(mrb, class, "set_targets", ping_set_targets,  ARGS_REQ(1));
+  mrb_define_method(mrb, class, "internal_init", ping_initialize,  ARGS_NONE());
+  mrb_define_method(mrb, class, "_clear_targets", ping_clear_targets,  ARGS_NONE());
+  mrb_define_method(mrb, class, "_set_targets", ping_set_targets,  ARGS_REQ(1));
   mrb_define_method(mrb, class, "_send_pings", ping_send_pings,  ARGS_REQ(1));
     
   mrb_gc_arena_restore(mrb, ai);
