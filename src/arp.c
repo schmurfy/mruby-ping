@@ -205,12 +205,9 @@ static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
 {
   struct arp_state *st = mrb_malloc(mrb, sizeof(struct arp_state));
   char error_buffer[LIBNET_ERRBUF_SIZE];
-  mrb_value ifname_r;
   const char *ifname;
   
-  mrb_get_args(mrb, "S", &ifname_r);
-  
-  ifname = mrb_string_value_cstr(mrb, &ifname_r);
+  mrb_get_args(mrb, "z", &ifname);
   
   st->ctx = libnet_init(LIBNET_LINK, ifname, error_buffer);
   if( st->ctx == NULL )
