@@ -370,11 +370,11 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     key = mrb_str_new_cstr(mrb, host);
     value = mrb_hash_get(mrb, ret_value, key);
     
-    latency = ((replies[i].received_at.tv_sec - replies[i].sent_at.tv_sec) * 1000000 + (replies[i].received_at.tv_usec - replies[i].sent_at.tv_usec));
-    if( latency < 0 ){
+    if( (replies[i].received_at.tv_sec == 0) && (replies[i].received_at.tv_usec == 0) ){
       mrb_ary_set(mrb, value, replies[i].seq, mrb_nil_value());
     }
     else {
+      latency = ((replies[i].received_at.tv_sec - replies[i].sent_at.tv_sec) * 1000000 + (replies[i].received_at.tv_usec - replies[i].sent_at.tv_usec));
       mrb_ary_set(mrb, value, replies[i].seq, mrb_fixnum_value(latency));
     }
   }
