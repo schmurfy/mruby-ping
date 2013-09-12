@@ -16,6 +16,10 @@ class ICMPPinger
     _clear_targets()
   end
   
+  def has_targets?
+    @targets.size() > 0
+  end
+  
   ##
   # @param [Integer] timeout how much time to wait for the replies (in ms)
   # @param [Integer] count how many icmp request to send
