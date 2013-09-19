@@ -153,7 +153,7 @@ static mrb_value send_and_receive_replies(mrb_state *mrb, mrb_value self, const 
   
   ifname = libnet_getdevice(st->ctx);
   
-  pcap = pcap_open_live(ifname, 100, PROMISC, timeout, errbuff);
+  pcap = pcap_open_live(ifname, 2048, PROMISC, timeout, errbuff);
   if( pcap == NULL )
     ERRF("pcap_open_live failed: %s\n", errbuff);
   
@@ -181,7 +181,7 @@ static mrb_value send_and_receive_replies(mrb_state *mrb, mrb_value self, const 
   }
   
   while(1){
-    if( pcap_dispatch(pcap, 200, pcap_packet_handler, (uint8_t *)&loop_args) == -1 ){
+    if( pcap_dispatch(pcap, 0, pcap_packet_handler, (uint8_t *)&loop_args) == -1 ){
       ERRF("pcap_loop(): %s\n", pcap_geterr(pcap));
     }
     
