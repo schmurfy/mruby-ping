@@ -17,6 +17,7 @@ static pcap_t *pcap;
 struct arp_state {
   libnet_t *ctx;
   
+  in_addr_t ip_source;
   struct target_address *targets;
   uint16_t targets_count;
 };
@@ -54,13 +55,7 @@ static int arp_send(
     if( source_hardware == NULL )
       ERRLN("error obtaining source hardware address : %s\n", libnet_geterror( pnet ));
   }
-  
-  if( source_address == 0 ){
-    source_address = libnet_get_ipaddr4(pnet);
-    if( source_address == 0 )
-      ERRLN("error obtaining source address : %s\n", libnet_geterror( pnet ));
-  }
-  
+    
   if( target_hardware == NULL ){
     target_hardware = broadcast_mac_addr;
   }
@@ -143,8 +138,9 @@ static void pcap_packet_handler(uint8_t *args_ptr, const struct pcap_pkthdr *h, 
 
 #define PCAP_FILTER "arp"
 
-static mrb_value receive_replies(mrb_state *mrb, mrb_value self, const struct arp_state *st, mrb_int timeout)
+static mrb_value send_and_receive_replies(mrb_state *mrb, mrb_value self, const struct arp_state *st, mrb_int timeout)
 {
+  int i;
   char errbuff[PCAP_ERRBUF_SIZE];
   const char *ifname;
   mrb_value ret_value;
@@ -179,6 +175,11 @@ static mrb_value receive_replies(mrb_state *mrb, mrb_value self, const struct ar
   
   ret_value = mrb_hash_new_capa(mrb, st->targets_count);
   
+  // send all arp requests
+  for(i = 0; i< st->targets_count; i++){
+    arp_send(st->ctx, ARPOP_REQUEST, NULL, st->ip_source, NULL, st->targets[i].in_addr);
+  }
+  
   while(1){
     if( pcap_dispatch(pcap, 200, pcap_packet_handler, (uint8_t *)&loop_args) == -1 ){
       ERRF("pcap_loop(): %s\n", pcap_geterr(pcap));
@@ -205,9 +206,9 @@ static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
 {
   struct arp_state *st = mrb_malloc(mrb, sizeof(struct arp_state));
   char error_buffer[LIBNET_ERRBUF_SIZE];
-  const char *ifname;
+  const char *ifname, *ip_source = NULL;
   
-  mrb_get_args(mrb, "z", &ifname);
+  mrb_get_args(mrb, "z|z", &ifname, &ip_source);
   
   st->ctx = libnet_init(LIBNET_LINK, ifname, error_buffer);
   if( st->ctx == NULL )
@@ -215,10 +216,22 @@ static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
   
   st->targets = NULL;
   
+  if( ip_source != NULL ){
+    st->ip_source = inet_addr(ip_source);
+  }
+  else {
+    st->ip_source = libnet_get_ipaddr4(st->ctx);
+    if( st->ip_source == 0 ){
+      mrb_raisef(mrb, E_RUNTIME_ERROR, "error obtaining source address : %S\n", mrb_str_new_cstr(mrb, libnet_geterror( st->ctx )));
+      goto ret;
+    }
+    
+  }
+  
   DATA_PTR(self)  = (void*)st;
   DATA_TYPE(self) = &arp_ping_state_type;
 
-  
+ret:
   return self;
 }
 
@@ -244,20 +257,14 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
 
 static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
 {
-  int i;
   mrb_int timeout;
   struct arp_state *st = DATA_PTR(self);
   
   mrb_get_args(mrb, "i", &timeout);
   
-  // send all arp requests
-  for(i = 0; i< st->targets_count; i++){
-    arp_send(st->ctx, ARPOP_REQUEST, NULL, 0, NULL, st->targets[i].in_addr);
-  }
-  
   // and collect the replies
   
-  return receive_replies(mrb, self, st, timeout);
+  return send_and_receive_replies(mrb, self, st, timeout);
 }
 
 
