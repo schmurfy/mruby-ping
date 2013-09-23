@@ -18,7 +18,7 @@
 
 struct target_address {
   in_addr_t in_addr;
-  u_int     rtable;
+  uint32_t  rtable;
 };
 
 // shared

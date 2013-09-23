@@ -341,7 +341,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       
     #ifdef __OpenBSD__
       // force routing table
-      if (setsockopt(sending_socket, SOL_SOCKET, SO_RTABLE, &st->targets[i].rtable, sizeof(u_int)) == -1){
+      if (setsockopt(sending_socket, SOL_SOCKET, SO_RTABLE, &st->targets[i].rtable, sizeof(uint32_t)) == -1){
         perror("setsockopt (rtable) ");
       }
     #endif
