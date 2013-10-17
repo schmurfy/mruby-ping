@@ -121,6 +121,7 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
   mrb_int n;
   mrb_value arr;
   struct state *st = DATA_PTR(self);
+  int ai = mrb_gc_arena_save(mrb);
   
   mrb_get_args(mrb, "A", &arr);
     
@@ -139,6 +140,8 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
       st->targets[n].rtable = mrb_fixnum(r_rtable);
       st->targets[n].in_addr = inet_addr( mrb_str_to_cstr(mrb, r_addr) );
     }
+    
+    mrb_gc_arena_restore(mrb, ai);
   }
   
   return self;
@@ -265,7 +268,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   struct state *st = DATA_PTR(self);
   mrb_int count, timeout, delay;
   mrb_value ret_value;
-  int i, pos = 0;
+  int i, pos = 0, ai;
   int sending_socket = st->icmp_sock;
   
   int replies_index = 0;
@@ -303,6 +306,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     mrb_raisef(mrb, E_RUNTIME_ERROR, "thread creation failed: %d", i);
     goto free_replies;
   }
+  ai = mrb_gc_arena_save(mrb);
   
   // send each icmp echo request
   for(i = 0; i< st->targets_count; i++){
