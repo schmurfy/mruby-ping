@@ -313,8 +313,6 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     int j;
     mrb_value key, arr;
     struct sockaddr_in dst_addr;
-    int ai = mrb_gc_arena_save(mrb);
-    
     // prepare destination address
     bzero(&dst_addr, sizeof(dst_addr));
     dst_addr.sin_family = AF_INET;
@@ -383,6 +381,8 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       latency = ((replies[i].received_at.tv_sec - replies[i].sent_at.tv_sec) * 1000000 + (replies[i].received_at.tv_usec - replies[i].sent_at.tv_usec));
       mrb_ary_set(mrb, value, replies[i].seq, mrb_fixnum_value(latency));
     }
+    
+    mrb_gc_arena_restore(mrb, ai);
   }
   
 free_replies:
