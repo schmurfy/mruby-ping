@@ -309,6 +309,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     int j;
     mrb_value key, arr;
     struct sockaddr_in dst_addr;
+    int ai = mrb_gc_arena_save(mrb);
     
     // prepare destination address
     bzero(&dst_addr, sizeof(dst_addr));
@@ -356,7 +357,8 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       }
       
     }
-
+    
+    mrb_gc_arena_restore(mrb, ai);
   }
   
   pthread_join(reply_thread, NULL);
