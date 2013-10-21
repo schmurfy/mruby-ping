@@ -8,7 +8,7 @@ class ICMPPinger
   end
   
   def add_target(addr, opts = {})
-    @targets << [addr, opts.delete(:routing_table) || 0]
+    @targets << [addr, opts.delete(:routing_table) || 0, opts.delete(:uid) || 0]
   end
   
   def clear_targets

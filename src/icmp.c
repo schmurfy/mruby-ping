@@ -132,6 +132,7 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
     mrb_value arr2 = mrb_ary_ref(mrb, arr, n);
     mrb_value r_addr = mrb_ary_ref(mrb, arr2, 0);
     mrb_value r_rtable = mrb_ary_ref(mrb, arr2, 1);
+    mrb_value r_uid = mrb_ary_ref(mrb, arr2, 2);
     
     if( !mrb_string_p(r_addr) ){
       mrb_raisef(mrb, E_TYPE_ERROR, "can't convert %s into String", mrb_obj_classname(mrb, r_addr));
@@ -139,6 +140,7 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
     else {
       st->targets[n].rtable = mrb_fixnum(r_rtable);
       st->targets[n].in_addr = inet_addr( mrb_str_to_cstr(mrb, r_addr) );
+      st->targets[n].uid = (uint16_t) mrb_fixnum(r_uid);
     }
     
     mrb_gc_arena_restore(mrb, ai);
@@ -167,7 +169,8 @@ static void fill_timeout(struct timeval *tv, uint64_t duration)
 
 
 struct ping_reply {
-  int seq;
+  uint16_t seq;
+  uint16_t id;
   in_addr_t addr;
   struct timeval sent_at, received_at;
 };
@@ -223,15 +226,15 @@ static void *thread_icmp_reply_catcher(void *v)
           struct ip *iphdr = (struct ip *) packet;
           struct icmp *pkt = (struct icmp *) (packet + (iphdr->ip_hl << 2));      /* skip ip hdr */
           
-          if( (pkt->icmp_type == ICMP_ECHOREPLY) && (pkt->icmp_id == 0xFFFF)){
+          if( pkt->icmp_type == ICMP_ECHOREPLY ){
             int i;
             
             // find which reply we just received
             for(i = 0; i< *args->replies_index; i++){
               struct ping_reply *reply = &args->replies[i];
               
-              // same addr and sequence id
-              if( (reply->addr == from.sin_addr.s_addr) && (reply->seq == ntohs(pkt->icmp_seq)) ){
+              // same addr, id and sequence id
+              if( (reply->addr == from.sin_addr.s_addr) && (reply->id == ntohs(pkt->icmp_id)) && (reply->seq == ntohs(pkt->icmp_seq)) ){
                 gettimeofday(&reply->received_at, NULL);
                 // printf("got reply for %d after %d ms\n", reply->seq, timediff(&reply->sent_at, &reply->received_at) / 1000);
                 break;
@@ -310,7 +313,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   
   // send each icmp echo request
   for(i = 0; i< st->targets_count; i++){
-    int j;
+    uint16_t j, reply_id;
     mrb_value key, arr;
     struct sockaddr_in dst_addr;
     // prepare destination address
@@ -318,17 +321,23 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     dst_addr.sin_family = AF_INET;
     dst_addr.sin_addr.s_addr = st->targets[i].in_addr;
     
-    key = mrb_str_new_cstr(mrb, inet_ntoa(dst_addr.sin_addr));
+    reply_id = st->targets[i].uid;
+    if( reply_id == 0 ){
+      reply_id = 100 + i;
+    }
+    
+    key = mrb_fixnum_value(reply_id);
     arr = mrb_ary_new_capa(mrb, count);
     mrb_hash_set(mrb, ret_value, key, arr);
     
     icmp.icmp_type = ICMP_ECHO;
     icmp.icmp_code = 0;
-    icmp.icmp_id = 0xFFFF;
+    icmp.icmp_id = htons(reply_id);
     
     for(j = 0; j< count; j++){
       struct ping_reply *reply = &replies[replies_index];
       
+      reply->id = reply_id;
       reply->seq = j;
       reply->addr = dst_addr.sin_addr.s_addr;
       // printf("saved sent_at for seq %d\n", j);
@@ -370,9 +379,14 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     char *host = inet_ntoa( *((struct in_addr *) &replies[i].addr));
     mrb_value key, value;
     mrb_int latency;
-        
-    key = mrb_str_new_cstr(mrb, host);
+    
+    // key = mrb_str_new_cstr(mrb, host);
+    key = mrb_fixnum_value(replies[i].id);
     value = mrb_hash_get(mrb, ret_value, key);
+    if( mrb_nil_p(value) ){
+      printf("no array with key %d !\n", replies[i].id);
+      goto error;
+    }
     
     if( (replies[i].received_at.tv_sec == 0) && (replies[i].received_at.tv_usec == 0) ){
       mrb_ary_set(mrb, value, replies[i].seq, mrb_nil_value());
