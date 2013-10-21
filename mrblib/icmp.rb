@@ -69,7 +69,7 @@ private
     values_sorted.sort!
     len = values_sorted.size
     
-    if values_sorted.empty?
+    if values_sorted.size < 3
       {}
     else
       perc.map do |p|
