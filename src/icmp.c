@@ -273,6 +273,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   mrb_value ret_value;
   int i, pos = 0, ai;
   int sending_socket = st->icmp_sock;
+  uint16_t j;
   
   int replies_index = 0;
   struct ping_reply *replies;
@@ -311,46 +312,53 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   }
   ai = mrb_gc_arena_save(mrb);
   
-  // send each icmp echo request
-  for(i = 0; i< st->targets_count; i++){
-    uint16_t j, reply_id;
-    mrb_value key, arr;
-    struct sockaddr_in dst_addr;
-    // prepare destination address
-    bzero(&dst_addr, sizeof(dst_addr));
-    dst_addr.sin_family = AF_INET;
-    dst_addr.sin_addr.s_addr = st->targets[i].in_addr;
+
+  
+  for(j = 0; j< count; j++){
     
-    reply_id = st->targets[i].uid;
-    if( reply_id == 0 ){
-      reply_id = 100 + i;
-    }
-    
-    key = mrb_fixnum_value(reply_id);
-    arr = mrb_ary_new_capa(mrb, count);
-    mrb_hash_set(mrb, ret_value, key, arr);
-    
-    icmp.icmp_type = ICMP_ECHO;
-    icmp.icmp_code = 0;
-    icmp.icmp_id = htons(reply_id);
-    
-    for(j = 0; j< count; j++){
+    // for each "tick" send one icmp for each defined target
+    // and then sleep
+    for(i = 0; i< st->targets_count; i++){
+      uint16_t reply_id;
+      mrb_value key, arr;
+      struct sockaddr_in dst_addr;
       struct ping_reply *reply = &replies[replies_index];
       
+      
+      // prepare destination address
+      bzero(&dst_addr, sizeof(dst_addr));
+      dst_addr.sin_family = AF_INET;
+      dst_addr.sin_addr.s_addr = st->targets[i].in_addr;
+      
+      reply_id = st->targets[i].uid;
+      if( reply_id == 0 ){
+        reply_id = 100 + i;
+      }
+      
+      key = mrb_fixnum_value(reply_id);
+      arr = mrb_ary_new_capa(mrb, count);
+      mrb_hash_set(mrb, ret_value, key, arr);
+      
+      icmp.icmp_type = ICMP_ECHO;
+      icmp.icmp_code = 0;
+      icmp.icmp_id = htons(reply_id);
+      
       reply->id = reply_id;
-      reply->seq = j;
+      reply->seq = j + 1;
       reply->addr = dst_addr.sin_addr.s_addr;
       // printf("saved sent_at for seq %d\n", j);
       gettimeofday(&reply->sent_at, NULL);
 
       mrb_ary_set(mrb, arr, j, mrb_nil_value());
       
-      icmp.icmp_seq = htons(j);
+      icmp.icmp_seq = htons(j + 1);
       icmp.icmp_cksum = 0;
       icmp.icmp_cksum = in_cksum((uint16_t *)&icmp, sizeof(icmp));
       
       memcpy(packet + pos, &icmp, sizeof(icmp));
       
+      
+      // send the icmp packet
     #ifdef __OpenBSD__
       // force routing table
       if (setsockopt(sending_socket, SOL_SOCKET, SO_RTABLE, &st->targets[i].rtable, sizeof(uint32_t)) == -1){
@@ -360,16 +368,16 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       
       replies_index++;
       if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
-        printf("sendto(dst: %s) error: %s\n", inet_ntoa(dst_addr.sin_addr), strerror(errno));
+        if((errno != EHOSTDOWN) && (errno != EHOSTUNREACH)){
+          printf("sendto(dst: %s) error: %s\n", inet_ntoa(dst_addr.sin_addr), strerror(errno));
+        }
         // mrb_raisef(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet: %S", strerror(errno));
       }
-      else {
-        usleep(delay * 1000);
-      }
       
+      mrb_gc_arena_restore(mrb, ai);
     }
     
-    mrb_gc_arena_restore(mrb, ai);
+    usleep(delay * 1000);
   }
   
   pthread_join(reply_thread, NULL);
@@ -389,11 +397,11 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     }
     
     if( (replies[i].received_at.tv_sec == 0) && (replies[i].received_at.tv_usec == 0) ){
-      mrb_ary_set(mrb, value, replies[i].seq, mrb_nil_value());
+      mrb_ary_set(mrb, value, replies[i].seq - 1, mrb_nil_value());
     }
     else {
       latency = ((replies[i].received_at.tv_sec - replies[i].sent_at.tv_sec) * 1000000 + (replies[i].received_at.tv_usec - replies[i].sent_at.tv_usec));
-      mrb_ary_set(mrb, value, replies[i].seq, mrb_fixnum_value(latency));
+      mrb_ary_set(mrb, value, replies[i].seq - 1, mrb_fixnum_value(latency));
     }
     
     mrb_gc_arena_restore(mrb, ai);

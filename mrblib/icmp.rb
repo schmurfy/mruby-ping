@@ -21,9 +21,9 @@ class ICMPPinger
   end
   
   ##
-  # @param [Integer] timeout how much time to wait for the replies (in ms)
+  # @param [Integer] timeout how much time to wait for all the replies (in ms)
   # @param [Integer] count how many icmp request to send
-  # @param [Integer] delay how much time to wait before each icmp request
+  # @param [Integer] delay how much time to wait before each icmp requests batch
   def send_pings(timeout, count = 1, delay = 50, wanted_percentiles = [])
     unless @init_done
       _set_targets(@targets)
