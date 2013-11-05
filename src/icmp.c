@@ -456,7 +456,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   
   // and process the received replies
   for(i = 0; i< replies_index; i++){
-    char *host = inet_ntoa( *((struct in_addr *) &replies[i].addr));
+    // char *host = inet_ntoa( *((struct in_addr *) &replies[i].addr));
     mrb_value key, value;
     mrb_int latency;
     
