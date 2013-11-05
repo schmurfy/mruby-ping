@@ -17,13 +17,19 @@
 #include <unistd.h>
 
 #define MALLOC(X) mrb_malloc(mrb, X);
+#define REALLOC(P, X) mrb_realloc(mrb, P, X);
 #define FREE(X) mrb_free(mrb, X);
 
 #include "mruby-ping.h"
 
+struct rtable_socket {
+  uint32_t rtable;
+  int socket;
+};
+
 struct state {
-  int icmp_sock;
-  int raw_sock;
+  struct rtable_socket *icmp_socks;
+  uint16_t icmp_socks_count;
   struct target_address *targets;
   uint16_t targets_count;
 };
@@ -66,36 +72,73 @@ static void ping_state_free(mrb_state *mrb, void *ptr)
 
 static struct mrb_data_type ping_state_type = { "Pinger", ping_state_free };
 
+static int init_rtable_socket(mrb_state *mrb, struct state *st, uint32_t rtable)
+{
+  int i, ret = -1;
+  
+  // first check if we already have a socket in this routing table
+  for(i = 0; i< st->icmp_socks_count; i++){
+    if( st->icmp_socks[i].rtable == rtable ){
+      ret = st->icmp_socks[i].socket;
+      break;
+    }
+  }
+  
+  // create it if none already exist
+  if( ret == -1 ){
+    int index = st->icmp_socks_count++;
+    
+    if( st->icmp_socks == NULL ){
+      st->icmp_socks = MALLOC(sizeof(struct rtable_socket) * st->icmp_socks_count);
+    }
+    else {
+      st->icmp_socks = REALLOC(st->icmp_socks, sizeof(struct rtable_socket) * st->icmp_socks_count);
+    }
+    
+    ret = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+
+    if( ret != -1 ){
+      int flags;
+      
+      // set the socket as non blocking
+      flags = fcntl(ret, F_GETFL);
+      if ( flags < 0){
+        perror("fnctl(GET) failed");
+        return -1;
+      }
+      
+      flags |= O_NONBLOCK;
+      
+      if (fcntl(ret, F_SETFL, flags) < 0){
+        perror("fnctl(SET) failed\n");
+        return -1;
+      }
+      
+    #ifdef __OpenBSD__
+      // force routing table, do nothing if rtable is 0 (default table)
+      if( rtable != 0 ){
+        if( setsockopt(ret, SOL_SOCKET, SO_RTABLE, &rtable, sizeof(uint32_t)) == -1 ){
+          perror("setsockopt (rtable) ");
+        }
+      }
+    #endif
+
+      
+      st->icmp_socks[index].rtable = rtable;
+      st->icmp_socks[index].socket = ret;
+    }
+  }
+  
+  return ret;
+}
 
 static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
 {
-  int flags;
+  
   struct state *st = MALLOC(sizeof(struct state));
   
-  if ((st->raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW)) < 0) {
-    mrb_raise(mrb, E_RUNTIME_ERROR, "cannot create raw socket, are you root ?");
-    return mrb_nil_value();
-  }
-  
-  if ((st->icmp_sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP)) < 0) {
-    mrb_raise(mrb, E_RUNTIME_ERROR, "cannot create icmp socket, are you root ?");
-    return mrb_nil_value();
-  }
-  
-  // set the socket as non blocking
-  flags = fcntl(st->icmp_sock, F_GETFL);
-  if ( flags < 0){
-    mrb_raise(mrb, E_RUNTIME_ERROR, "fnctl(GET) failed");
-    return mrb_nil_value();
-  }
-  
-  flags |= O_NONBLOCK;
-  
-  if (fcntl(st->icmp_sock, F_SETFL, flags) < 0){
-    mrb_raise(mrb, E_RUNTIME_ERROR, "fnctl(SET) failed");
-    return mrb_nil_value();
-  }
-
+  st->icmp_socks = NULL;
+  st->icmp_socks_count = 0;
   
   st->targets = NULL;
   
@@ -124,6 +167,13 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
   int ai = mrb_gc_arena_save(mrb);
   
   mrb_get_args(mrb, "A", &arr);
+  
+  // close existing icmp sockets
+  if( st->icmp_socks != NULL ){
+    FREE(st->icmp_socks);
+    st->icmp_socks = NULL;
+    st->icmp_socks_count = 0;
+  }
     
   st->targets_count = RARRAY_LEN(arr);
   st->targets = MALLOC(sizeof(struct target_address) * st->targets_count );
@@ -141,6 +191,11 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
       st->targets[n].rtable = mrb_fixnum(r_rtable);
       st->targets[n].in_addr = inet_addr( mrb_str_to_cstr(mrb, r_addr) );
       st->targets[n].uid = (uint16_t) mrb_fixnum(r_uid);
+      
+      // create icmp socket
+      if( init_rtable_socket(mrb, st, st->targets[n].rtable) == -1 ){
+        mrb_raise(mrb, E_RUNTIME_ERROR, "cannot create icmp socket, are you root ?");
+      }
     }
     
     mrb_gc_arena_restore(mrb, ai);
@@ -197,52 +252,66 @@ static void *thread_icmp_reply_catcher(void *v)
   gettimeofday(&started_at, NULL);
   
   while (1) {
+    int i, maxfd = 0;
     struct sockaddr_in from;
     socklen_t fromlen = sizeof(from);
     
     FD_ZERO(&rfds);
-    FD_SET(args->state->icmp_sock, &rfds);
+    
+    for(i = 0; i< args->state->icmp_socks_count; i++){
+      FD_SET(args->state->icmp_socks[i].socket, &rfds);
+      if( args->state->icmp_socks[i].socket > maxfd ){
+        maxfd = args->state->icmp_socks[i].socket;
+      }
+    }
     
     fill_timeout(&tv, *args->timeout - wait_time);
-    ret = select(args->state->icmp_sock + 1, &rfds, NULL, NULL, &tv);
+    ret = select(maxfd, &rfds, NULL, NULL, &tv);
     if( ret == -1 ){
       perror("select");
       return NULL;
     }
     
-    if( ret == 1 ){
-      while(1){
-        uint8_t packet[sizeof(struct ip) + sizeof(struct icmp)];
-        c = recvfrom(args->state->icmp_sock, packet, packet_size, 0, (struct sockaddr *) &from, &fromlen);
-        if( c < 0 ) {
-          if ((errno != EINTR) && (errno != EAGAIN)){
-            perror("recfrom");
-            return NULL;
-          }
-          
-          break;
-        }
-        if (c >= sizeof(struct ip) + sizeof(struct icmp)) {
-          struct ip *iphdr = (struct ip *) packet;
-          struct icmp *pkt = (struct icmp *) (packet + (iphdr->ip_hl << 2));      /* skip ip hdr */
-          
-          if( pkt->icmp_type == ICMP_ECHOREPLY ){
-            int i;
-            
-            // find which reply we just received
-            for(i = 0; i< *args->replies_index; i++){
-              struct ping_reply *reply = &args->replies[i];
+    if( ret > 0 ){
+      for(i = 0; i< args->state->icmp_socks_count; i++){
+        int sock = args->state->icmp_socks[i].socket;
+        
+        if( FD_ISSET(sock, &rfds) ){
+          while(1){
+            uint8_t packet[sizeof(struct ip) + sizeof(struct icmp)];
+            c = recvfrom(sock, packet, packet_size, 0, (struct sockaddr *) &from, &fromlen);
+            if( c < 0 ) {
+              if ((errno != EINTR) && (errno != EAGAIN)){
+                perror("recfrom");
+                return NULL;
+              }
               
-              // same addr, id and sequence id
-              if( (reply->addr == from.sin_addr.s_addr) && (reply->id == ntohs(pkt->icmp_id)) && (reply->seq == ntohs(pkt->icmp_seq)) ){
-                gettimeofday(&reply->received_at, NULL);
-                // printf("got reply for %d after %d ms\n", reply->seq, timediff(&reply->sent_at, &reply->received_at) / 1000);
-                break;
+              break;
+            }
+            if (c >= sizeof(struct ip) + sizeof(struct icmp)) {
+              struct ip *iphdr = (struct ip *) packet;
+              struct icmp *pkt = (struct icmp *) (packet + (iphdr->ip_hl << 2));      /* skip ip hdr */
+              
+              if( pkt->icmp_type == ICMP_ECHOREPLY ){
+                int i;
+                
+                // find which reply we just received
+                for(i = 0; i< *args->replies_index; i++){
+                  struct ping_reply *reply = &args->replies[i];
+                  
+                  // same addr, id and sequence id
+                  if( (reply->addr == from.sin_addr.s_addr) && (reply->id == ntohs(pkt->icmp_id)) && (reply->seq == ntohs(pkt->icmp_seq)) ){
+                    gettimeofday(&reply->received_at, NULL);
+                    // printf("got reply for %d after %d ms\n", reply->seq, timediff(&reply->sent_at, &reply->received_at) / 1000);
+                    break;
+                  }
+                }
+                
               }
             }
-            
           }
         }
+        
       }
     }
     else {
@@ -272,7 +341,6 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   mrb_int count, timeout, delay;
   mrb_value ret_value;
   int i, pos = 0, ai;
-  int sending_socket = st->icmp_sock;
   uint16_t j;
   
   int replies_index = 0;
@@ -319,6 +387,8 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     // for each "tick" send one icmp for each defined target
     // and then sleep
     for(i = 0; i< st->targets_count; i++){
+      int k;
+      int sending_socket;
       uint16_t reply_id;
       mrb_value key, arr;
       struct sockaddr_in dst_addr;
@@ -357,15 +427,17 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       
       memcpy(packet + pos, &icmp, sizeof(icmp));
       
+      // find the right socket
+      
+      // sending_socket
+      for(k = 0; k< st->icmp_socks_count; k++){
+        if( st->icmp_socks[k].rtable == st->targets[i].rtable ){
+          sending_socket = st->icmp_socks[k].socket;
+          break;
+        }
+      }
       
       // send the icmp packet
-    #ifdef __OpenBSD__
-      // force routing table
-      if (setsockopt(sending_socket, SOL_SOCKET, SO_RTABLE, &st->targets[i].rtable, sizeof(uint32_t)) == -1){
-        perror("setsockopt (rtable) ");
-      }
-    #endif
-      
       replies_index++;
       if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
         if((errno != EHOSTDOWN) && (errno != EHOSTUNREACH)){
