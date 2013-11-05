@@ -189,7 +189,7 @@ static void *thread_icmp_reply_catcher(void *v)
   fd_set rfds;
   struct timeval tv, started_at;
   size_t packet_size;
-  int wait_time = 0; // how much did we already wait
+  long wait_time = 0; // how much did we already wait
   
   // we will receive both the ip header and the icmp data
   packet_size = sizeof(struct ip) + sizeof(struct icmp);
@@ -249,10 +249,10 @@ static void *thread_icmp_reply_catcher(void *v)
       // printf("select ret = %d\n", ret);
     }
     
-    if( ret == 0 ){
+    {
       struct timeval now;
       gettimeofday(&now, NULL);
-      wait_time += (now.tv_sec - started_at.tv_sec) * 1000000;
+      wait_time = (now.tv_sec - started_at.tv_sec) * 1000000;
       wait_time += (now.tv_usec - started_at.tv_usec);
       
       // printf("%d %ld, %d\n", ret, tv.tv_sec, tv.tv_usec);
