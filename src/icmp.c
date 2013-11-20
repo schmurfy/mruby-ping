@@ -388,7 +388,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     // and then sleep
     for(i = 0; i< st->targets_count; i++){
       int k;
-      int sending_socket;
+      int sending_socket = -1;
       uint16_t reply_id;
       mrb_value key, arr;
       struct sockaddr_in dst_addr;
@@ -437,13 +437,15 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
         }
       }
       
-      // send the icmp packet
-      replies_index++;
-      if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
-        if((errno != EHOSTDOWN) && (errno != EHOSTUNREACH)){
-          printf("sendto(dst: %s) error: %s\n", inet_ntoa(dst_addr.sin_addr), strerror(errno));
+      if( sending_socket != -1 ){
+        // send the icmp packet
+        replies_index++;
+        if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
+          if((errno != EHOSTDOWN) && (errno != EHOSTUNREACH)){
+            printf("sendto(dst: %s) error: %s\n", inet_ntoa(dst_addr.sin_addr), strerror(errno));
+          }
+          // mrb_raisef(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet: %S", strerror(errno));
         }
-        // mrb_raisef(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet: %S", strerror(errno));
       }
       
       mrb_gc_arena_restore(mrb, ai);
