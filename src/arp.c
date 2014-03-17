@@ -270,7 +270,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
 
 void mruby_ping_init_arp(mrb_state *mrb)
 {
-  struct RClass *class = mrb_define_class(mrb, "ARPPinger", NULL);
+  struct RClass *class = mrb_define_class(mrb, "ARPPinger", mrb->object_class);
   
   int ai = mrb_gc_arena_save(mrb);
   

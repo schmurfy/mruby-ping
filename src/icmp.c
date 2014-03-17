@@ -490,7 +490,7 @@ error:
 
 void mruby_ping_init_icmp(mrb_state *mrb)
 {
-  struct RClass *class = mrb_define_class(mrb, "ICMPPinger", NULL);
+  struct RClass *class = mrb_define_class(mrb, "ICMPPinger", mrb->object_class);
   
   int ai = mrb_gc_arena_save(mrb);
   
