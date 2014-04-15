@@ -15,6 +15,7 @@
 #include <pthread.h>
 
 #include <unistd.h>
+#include <strings.h> // bzero
 
 #define MALLOC(X) mrb_malloc(mrb, X);
 #define REALLOC(P, X) mrb_realloc(mrb, P, X);
