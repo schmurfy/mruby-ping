@@ -7,9 +7,12 @@ MRuby::Build.new do |conf|
   
   conf.gem          File.expand_path('../', __FILE__)
   conf.build_dir =  File.expand_path('../build', __FILE__)
-    
+  
+  conf.linker.library_paths << "/usr/local/lib"
+  
   conf.cc do |cc|
     # cc.defines << %w(MRB_INT64)
+    cc.include_paths << "/usr/local/include"
     cc.flags = %w(-g -Wall -Werror-implicit-function-declaration)
   end
 
