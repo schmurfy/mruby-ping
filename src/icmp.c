@@ -283,7 +283,7 @@ static void *thread_icmp_reply_catcher(void *v)
             c = recvfrom(sock, packet, packet_size, 0, (struct sockaddr *) &from, &fromlen);
             if( c < 0 ) {
               if ((errno != EINTR) && (errno != EAGAIN)){
-                perror("recfrom");
+                perror("recvfrom");
                 return NULL;
               }
               
