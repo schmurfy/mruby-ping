@@ -225,7 +225,7 @@ static void *thread_icmp_reply_catcher(void *v)
   long wait_time = 0; // how much did we already wait
   
   // we will receive both the ip header and the icmp data
-  packet_size = sizeof(struct ip) + sizeof(struct icmp);
+  packet_size = LIBNET_IPV4_H + LIBNET_ICMPV4_ECHO_H;
   
   gettimeofday(&started_at, NULL);
   
@@ -266,7 +266,7 @@ static void *thread_icmp_reply_catcher(void *v)
               
               break;
             }
-            if (c >= (LIBNET_IPV4_H + LIBNET_ICMPV4_ECHO_H)) {
+            if (c >= packet_size) {
               struct ip *iphdr = (struct ip *) packet;
               struct icmp *pkt = (struct icmp *) (packet + (iphdr->ip_hl << 2));      /* skip ip hdr */
               
