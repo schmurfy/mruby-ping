@@ -3,6 +3,7 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 
+#include <libnet.h>
 #include <netinet/in_systm.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
@@ -34,30 +35,6 @@ struct state {
   struct target_address *targets;
   uint16_t targets_count;
 };
-
-
-static uint16_t in_cksum(uint16_t *addr, int len)
-{
-  int nleft = len;
-  int sum = 0;
-  uint16_t *w = addr;
-  uint16_t answer = 0;
-
-  while (nleft > 1) {
-    sum += *w++;
-    nleft -= 2;
-  }
-
-  if (nleft == 1) {
-    *(uint8_t *) (&answer) = *(uint8_t *) w;
-    sum += answer;
-  }
-  
-  sum = (sum >> 16) + (sum & 0xFFFF);
-  sum += (sum >> 16);
-  answer = ~sum;
-  return (answer);
-}
 
 
 
@@ -289,7 +266,7 @@ static void *thread_icmp_reply_catcher(void *v)
               
               break;
             }
-            if (c >= sizeof(struct ip) + sizeof(struct icmp)) {
+            if (c >= (LIBNET_IPV4_H + LIBNET_ICMPV4_ECHO_H)) {
               struct ip *iphdr = (struct ip *) packet;
               struct icmp *pkt = (struct icmp *) (packet + (iphdr->ip_hl << 2));      /* skip ip hdr */
               
@@ -341,17 +318,24 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   struct state *st = DATA_PTR(self);
   mrb_int count, timeout, delay;
   mrb_value ret_value;
-  int i, pos = 0, ai;
+  int i, ai, c;
   uint16_t j;
-  
+  libnet_t *l;
+  char errbuf[LIBNET_ERRBUF_SIZE];
+    
   int replies_index = 0;
   struct ping_reply *replies;
   struct reply_thread_args thread_args;
   pthread_t reply_thread;
   
-  struct icmp icmp;
-  uint8_t packet[sizeof(struct ip) + sizeof(struct icmp)];
-  size_t packet_size;
+  
+  // use LINET_NONE since we use our own sockets
+  l = libnet_init(LIBNET_NONE, NULL, errbuf);
+  if( l == NULL ){
+    printf("libnet_init() failed: %s\n", errbuf);
+    goto error;
+  }
+
     
   mrb_get_args(mrb, "iii", &timeout, &count, &delay);
   timeout *= 1000; // ms => usec
@@ -361,7 +345,6 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     goto error;
   }
   
-  packet_size = sizeof(icmp);
   
   ret_value = mrb_hash_new_capa(mrb, st->targets_count);
   
@@ -394,6 +377,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       mrb_value key, arr;
       struct sockaddr_in dst_addr;
       struct ping_reply *reply = &replies[replies_index];
+      libnet_ptag_t t;
       
       
       // prepare destination address
@@ -410,10 +394,6 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       arr = mrb_ary_new_capa(mrb, count);
       mrb_hash_set(mrb, ret_value, key, arr);
       
-      icmp.icmp_type = ICMP_ECHO;
-      icmp.icmp_code = 0;
-      icmp.icmp_id = htons(reply_id);
-      
       reply->id = reply_id;
       reply->seq = j + 1;
       reply->addr = dst_addr.sin_addr.s_addr;
@@ -422,15 +402,37 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
 
       mrb_ary_set(mrb, arr, j, mrb_nil_value());
       
-      icmp.icmp_seq = htons(j + 1);
-      icmp.icmp_cksum = 0;
-      icmp.icmp_cksum = in_cksum((uint16_t *)&icmp, sizeof(icmp));
       
-      memcpy(packet + pos, &icmp, sizeof(icmp));
+      t = libnet_build_icmpv4_echo(
+            ICMP_ECHO,                            /* type */
+            0,                                    /* code */
+            0,                                    /* checksum */
+            reply_id,                             /* id */
+            j + 1,                                /* sequence number */
+            NULL,                                 /* payload */
+            0,                                    /* payload size */
+            l,                                    /* libnet handle */
+            0
+          );
+      
+      if( t == -1 ){
+        printf("Can't build ICMP header: %s\n", libnet_geterror(l));
+        goto error;
+      }
+      
+      t = libnet_autobuild_ipv4(
+          LIBNET_IPV4_H + LIBNET_ICMPV4_ECHO_H + 0, /* length */
+          IPPROTO_ICMP,                         /* protocol */
+          dst_addr.sin_addr.s_addr,             /* destination IP */
+          l
+        );
+      
+      if( t == -1 ){
+        printf("Can't build IP header: %s\n", libnet_geterror(l));
+        goto error;
+      }
       
       // find the right socket
-      
-      // sending_socket
       for(k = 0; k< st->icmp_socks_count; k++){
         if( st->icmp_socks[k].rtable == st->targets[i].rtable ){
           sending_socket = st->icmp_socks[k].socket;
@@ -439,8 +441,23 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       }
       
       if( sending_socket != -1 ){
+        uint32_t len, packet_size;
+        uint8_t *p = NULL;
+        uint8_t packet[1000];
+        
         // send the icmp packet
         replies_index++;
+        
+        c = libnet_pblock_coalesce(l, &p, &len);
+        if( c == -1 ){
+          printf("Cannot create packet: %s\n", libnet_geterror(l));
+          goto error;
+        }
+        
+        packet_size = len - LIBNET_IPV4_H;
+        memcpy(packet, p + LIBNET_IPV4_H, len - LIBNET_IPV4_H);
+        
+        
         if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
           if((errno != EHOSTDOWN) && (errno != EHOSTUNREACH)){
             printf("sendto(dst: %s) error: %s\n", inet_ntoa(dst_addr.sin_addr), strerror(errno));
@@ -486,6 +503,7 @@ free_replies:
   FREE(replies);
 
 error:
+  libnet_destroy(l);
   return ret_value;
 }
 
