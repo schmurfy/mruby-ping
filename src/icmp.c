@@ -398,7 +398,6 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       reply->seq = j + 1;
       reply->addr = dst_addr.sin_addr.s_addr;
       // printf("saved sent_at for seq %d\n", j);
-      gettimeofday(&reply->sent_at, NULL);
 
       mrb_ary_set(mrb, arr, j, mrb_nil_value());
       
@@ -458,7 +457,10 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
         memcpy(packet, p + LIBNET_IPV4_H, len - LIBNET_IPV4_H);
         
         
-        if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) < 0)  {
+        if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) == 0)  {
+          gettimeofday(&reply->sent_at, NULL);
+        }
+        else {
           if((errno != EHOSTDOWN) && (errno != EHOSTUNREACH)){
             printf("sendto(dst: %s) error: %s\n", inet_ntoa(dst_addr.sin_addr), strerror(errno));
           }
