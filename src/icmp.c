@@ -457,7 +457,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
         memcpy(packet, p + LIBNET_IPV4_H, len - LIBNET_IPV4_H);
         
         
-        if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) == 0)  {
+        if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) >= 0)  {
           gettimeofday(&reply->sent_at, NULL);
         }
         else {
