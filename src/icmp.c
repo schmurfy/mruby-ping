@@ -515,10 +515,10 @@ void mruby_ping_init_icmp(mrb_state *mrb)
   
   int ai = mrb_gc_arena_save(mrb);
   
-  mrb_define_method(mrb, class, "internal_init", ping_initialize,  ARGS_NONE());
-  mrb_define_method(mrb, class, "_clear_targets", ping_clear_targets,  ARGS_NONE());
-  mrb_define_method(mrb, class, "_set_targets", ping_set_targets,  ARGS_REQ(1));
-  mrb_define_method(mrb, class, "_send_pings", ping_send_pings,  ARGS_REQ(1));
+  mrb_define_method(mrb, class, "internal_init", ping_initialize,  MRB_ARGS_NONE());
+  mrb_define_method(mrb, class, "_clear_targets", ping_clear_targets,  MRB_ARGS_NONE());
+  mrb_define_method(mrb, class, "_set_targets", ping_set_targets,  MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, class, "_send_pings", ping_send_pings,  MRB_ARGS_REQ(1));
     
   mrb_gc_arena_restore(mrb, ai);
 }

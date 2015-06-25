@@ -274,9 +274,9 @@ void mruby_ping_init_arp(mrb_state *mrb)
   
   int ai = mrb_gc_arena_save(mrb);
   
-  mrb_define_method(mrb, class, "initialize", ping_initialize,  ARGS_REQ(1));
-  mrb_define_method(mrb, class, "set_targets", ping_set_targets,  ARGS_REQ(1));
-  mrb_define_method(mrb, class, "send_pings", ping_send_pings,  ARGS_REQ(1));
+  mrb_define_method(mrb, class, "initialize", ping_initialize,  MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, class, "set_targets", ping_set_targets,  MRB_ARGS_REQ(1));
+  mrb_define_method(mrb, class, "send_pings", ping_send_pings,  MRB_ARGS_REQ(1));
     
   mrb_gc_arena_restore(mrb, ai);
 }
