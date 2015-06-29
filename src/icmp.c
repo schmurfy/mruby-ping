@@ -313,6 +313,8 @@ static void *thread_icmp_reply_catcher(void *v)
   return NULL;
 }
 
+static libnet_t *l;
+
 static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
 {
   struct state *st = DATA_PTR(self);
@@ -320,7 +322,6 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   mrb_value ret_value;
   int i, ai, c;
   uint16_t j;
-  libnet_t *l;
   char errbuf[LIBNET_ERRBUF_SIZE];
     
   int replies_index = 0;
@@ -328,14 +329,6 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   struct reply_thread_args thread_args;
   pthread_t reply_thread;
   
-  
-  // use LINET_NONE since we use our own sockets
-  l = libnet_init(LIBNET_NONE, NULL, errbuf);
-  if( l == NULL ){
-    printf("libnet_init() failed: %s\n", errbuf);
-    goto error;
-  }
-
     
   mrb_get_args(mrb, "iii", &timeout, &count, &delay);
   timeout *= 1000; // ms => usec
@@ -505,7 +498,7 @@ free_replies:
   FREE(replies);
 
 error:
-  libnet_destroy(l);
+  // libnet_destroy(l);
   return ret_value;
 }
 
@@ -521,4 +514,11 @@ void mruby_ping_init_icmp(mrb_state *mrb)
   mrb_define_method(mrb, class, "_send_pings", ping_send_pings,  MRB_ARGS_REQ(1));
     
   mrb_gc_arena_restore(mrb, ai);
+  
+  // use LINET_NONE since we use our own sockets
+  l = libnet_init(LIBNET_NONE, NULL, errbuf);
+  if( l == NULL ){
+    printf("libnet_init() failed: %s\n", errbuf);
+    exit(1);
+  }
 }
