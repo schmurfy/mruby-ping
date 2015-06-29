@@ -497,9 +497,9 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   }
   
 free_replies:
-  FREE(replies);
-
 error:
+  FREE(replies);
+  
   // libnet_destroy(l);
   return ret_value;
 }
