@@ -24,6 +24,8 @@
 
 #include "mruby-ping.h"
 
+static char errbuf[LIBNET_ERRBUF_SIZE];
+
 struct rtable_socket {
   uint32_t rtable;
   int socket;
@@ -503,7 +505,6 @@ error:
 
 void mruby_ping_init_icmp(mrb_state *mrb)
 {
-  char errbuf[LIBNET_ERRBUF_SIZE];
   struct RClass *class = mrb_define_class(mrb, "ICMPPinger", mrb->object_class);
   
   int ai = mrb_gc_arena_save(mrb);
