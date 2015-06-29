@@ -322,7 +322,6 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
   mrb_value ret_value;
   int i, ai, c;
   uint16_t j;
-  char errbuf[LIBNET_ERRBUF_SIZE];
     
   int replies_index = 0;
   struct ping_reply *replies;
@@ -504,6 +503,7 @@ error:
 
 void mruby_ping_init_icmp(mrb_state *mrb)
 {
+  char errbuf[LIBNET_ERRBUF_SIZE];
   struct RClass *class = mrb_define_class(mrb, "ICMPPinger", mrb->object_class);
   
   int ai = mrb_gc_arena_save(mrb);
