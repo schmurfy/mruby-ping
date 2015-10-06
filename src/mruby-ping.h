@@ -13,13 +13,17 @@
 #include <errno.h>
 
 #include <arpa/inet.h>
-
-
+#include <net/if.h>
 
 struct target_address {
   in_addr_t in_addr;
+  in_addr_t in_addr_src;
   uint32_t  rtable;
   uint16_t  uid;
+
+#ifdef SO_BINDTODEVICE
+  char      device[IFNAMSIZ];
+#endif
 };
 
 // shared

@@ -26,16 +26,23 @@
 
 static char errbuf[LIBNET_ERRBUF_SIZE];
 
-struct rtable_socket {
-  uint32_t rtable;
+struct capture_socket {
+  uint32_t  rtable;
+#ifdef SO_BINDTODEVICE
+  char      device[IFNAMSIZ];
+#endif
   int socket;
 };
 
 struct state {
-  struct rtable_socket *icmp_socks;
-  uint16_t icmp_socks_count;
+  struct capture_socket *capture_sockets;
+  uint16_t capture_sockets_count;
+  
   struct target_address *targets;
   uint16_t targets_count;
+  
+  libnet_t **libnet_contexts;
+  uint16_t libnet_contexts_count;
 };
 
 
@@ -52,27 +59,32 @@ static void ping_state_free(mrb_state *mrb, void *ptr)
 
 static struct mrb_data_type ping_state_type = { "Pinger", ping_state_free };
 
-static int init_rtable_socket(mrb_state *mrb, struct state *st, uint32_t rtable)
+static int init_capture_socket(mrb_state *mrb, struct state *st, struct target_address *ta)
 {
   int i, ret = -1;
   
-  // first check if we already have a socket in this routing table
-  for(i = 0; i< st->icmp_socks_count; i++){
-    if( st->icmp_socks[i].rtable == rtable ){
-      ret = st->icmp_socks[i].socket;
+  // first check if we already have a socket in this routing table/device
+  for(i = 0; i< st->capture_sockets_count; i++){
+    const char *device = NULL;
+#ifdef SO_BINDTODEVICE
+    device = st->capture_sockets[i].device;
+#endif
+
+    if( (st->capture_sockets[i].rtable == ta->rtable) && ( !device || !strcmp(device, ta->device) ) ){
+      ret = st->capture_sockets[i].socket;
       break;
     }
   }
   
   // create it if none already exist
   if( ret == -1 ){
-    int index = st->icmp_socks_count++;
+    int index = st->capture_sockets_count++;
     
-    if( st->icmp_socks == NULL ){
-      st->icmp_socks = MALLOC(sizeof(struct rtable_socket) * st->icmp_socks_count);
+    if( st->capture_sockets == NULL ){
+      st->capture_sockets = MALLOC(sizeof(struct capture_socket) * st->capture_sockets_count);
     }
     else {
-      st->icmp_socks = REALLOC(st->icmp_socks, sizeof(struct rtable_socket) * st->icmp_socks_count);
+      st->capture_sockets = REALLOC(st->capture_sockets, sizeof(struct capture_socket) * st->capture_sockets_count);
     }
     
     ret = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -94,22 +106,86 @@ static int init_rtable_socket(mrb_state *mrb, struct state *st, uint32_t rtable)
         return -1;
       }
       
-    #ifdef __OpenBSD__
+#ifdef __OpenBSD__
       // force routing table, do nothing if rtable is 0 (default table)
-      if( rtable != 0 ){
-        if( setsockopt(ret, SOL_SOCKET, SO_RTABLE, &rtable, sizeof(uint32_t)) == -1 ){
-          perror("setsockopt (rtable) ");
+      if( ta->rtable != 0 ){
+        if( setsockopt(ret, SOL_SOCKET, SO_RTABLE, &ta->rtable, sizeof(ta->rtable)) == -1 ){
+          perror("setsockopt(SO_RTABLE) ");
         }
       }
-    #endif
+#endif
 
+#ifdef SO_BINDTODEVICE
+      if( strlen(ta->device) > 0 ){
+        if( setsockopt(ret, SOL_SOCKET, SO_BINDTODEVICE, ta->device, strlen(ta->device) + 1) == -1 ){
+          perror("setsockopt(SO_BINDTODEVICE) ");
+        }
+      }
       
-      st->icmp_socks[index].rtable = rtable;
-      st->icmp_socks[index].socket = ret;
+      strncpy(st->capture_sockets[index].device, ta->device, IFNAMSIZ - 1);
+#endif
+      
+      st->capture_sockets[index].rtable = ta->rtable;
+      st->capture_sockets[index].socket = ret;
     }
   }
   
   return ret;
+}
+
+static libnet_t *find_libnet_context(struct state *st, const char *device)
+{
+  int i;
+  libnet_t *ret = NULL;
+  
+  for(i = 0; i< st->libnet_contexts_count; i++){
+    const char *context_device = libnet_getdevice(st->libnet_contexts[i]);
+    
+    // a libnet context already exists for this device, returns it and stop searching
+    // if a device was not specified, take the first one
+    if( !device[0] || !strcmp(context_device, device) ){
+      ret = st->libnet_contexts[i];
+      break;
+    }
+  }
+
+  
+  return ret;
+}
+
+static int init_libnet_context(mrb_state *mrb, struct state *st, const char *device)
+{
+  libnet_t *l;
+  
+  l = find_libnet_context(st, device);
+  if( l == NULL ){
+    // context not found, create a new one
+    // we reuse the same error buffer since we are not multithreaded for this part
+    l = libnet_init(LIBNET_RAW4, device, errbuf);
+    if( l > 0 ){
+      int index = st->libnet_contexts_count++;
+      
+      if( st->libnet_contexts == NULL ){
+        st->libnet_contexts = MALLOC(sizeof(libnet_t*) * st->libnet_contexts_count);
+      }
+      else {
+        st->libnet_contexts = REALLOC(st->libnet_contexts, sizeof(libnet_t*) * st->capture_sockets_count);
+      }
+      
+#ifdef SO_BINDTODEVICE
+      if( strlen(device) > 0 ){
+        if( setsockopt(libnet_getfd(l), SOL_SOCKET, SO_BINDTODEVICE, device, strlen(device) + 1) == -1 ){
+          perror("setsockopt(SO_BINDTODEVICE) ");
+        }
+      }
+#endif
+      
+      st->libnet_contexts[index] = l;
+      printf("** Created new context for device '%s' , fd: %d\n", device, libnet_getfd(l));
+    }
+  }
+    
+  return (l != NULL);
 }
 
 static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
@@ -117,10 +193,13 @@ static mrb_value ping_initialize(mrb_state *mrb, mrb_value self)
   
   struct state *st = MALLOC(sizeof(struct state));
   
-  st->icmp_socks = NULL;
-  st->icmp_socks_count = 0;
+  st->capture_sockets = NULL;
+  st->capture_sockets_count = 0;
   
   st->targets = NULL;
+  
+  st->libnet_contexts = NULL;
+  st->libnet_contexts_count = 0;
   
   DATA_PTR(self)  = (void*)st;
   DATA_TYPE(self) = &ping_state_type;
@@ -149,10 +228,10 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
   mrb_get_args(mrb, "A", &arr);
   
   // close existing icmp sockets
-  if( st->icmp_socks != NULL ){
-    FREE(st->icmp_socks);
-    st->icmp_socks = NULL;
-    st->icmp_socks_count = 0;
+  if( st->capture_sockets != NULL ){
+    FREE(st->capture_sockets);
+    st->capture_sockets = NULL;
+    st->capture_sockets_count = 0;
   }
     
   st->targets_count = RARRAY_LEN(arr);
@@ -163,18 +242,47 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
     mrb_value r_addr = mrb_ary_ref(mrb, arr2, 0);
     mrb_value r_rtable = mrb_ary_ref(mrb, arr2, 1);
     mrb_value r_uid = mrb_ary_ref(mrb, arr2, 2);
+    mrb_value r_ifname = mrb_ary_ref(mrb, arr2, 3);
+    mrb_value r_src_addr = mrb_ary_ref(mrb, arr2, 4);
     
     if( !mrb_string_p(r_addr) ){
       mrb_raisef(mrb, E_TYPE_ERROR, "can't convert %s into String", mrb_obj_classname(mrb, r_addr));
     }
     else {
+      const char *device = NULL;
+      
       st->targets[n].rtable = mrb_fixnum(r_rtable);
       st->targets[n].in_addr = inet_addr( mrb_str_to_cstr(mrb, r_addr) );
+      
+      if( mrb_nil_p(r_src_addr) ){
+        st->targets[n].in_addr_src = 0;
+      }
+      else {
+        st->targets[n].in_addr_src = inet_addr( mrb_str_to_cstr(mrb, r_src_addr) );
+      }
+      
       st->targets[n].uid = (uint16_t) mrb_fixnum(r_uid);
       
-      // create icmp socket
-      if( init_rtable_socket(mrb, st, st->targets[n].rtable) == -1 ){
+#ifdef SO_BINDTODEVICE
+      bzero(st->targets[n].device, sizeof(st->targets[n].device));
+      
+      if( !mrb_nil_p(r_ifname) ){
+        strncpy(st->targets[n].device, mrb_str_to_cstr(mrb, r_ifname),
+            sizeof(st->targets[n].device) - 1
+          );
+        
+        device = st->targets[n].device;
+      }
+#endif
+      
+      // create capture socket
+      if( init_capture_socket(mrb, st, &st->targets[n]) == -1 ){
         mrb_raise(mrb, E_RUNTIME_ERROR, "cannot create icmp socket, are you root ?");
+      }
+      
+      // create libnet context
+      if( init_libnet_context(mrb, st, device) == -1 ){
+        mrb_raisef(mrb, E_RUNTIME_ERROR, "cannot create libnet context: %S", mrb_str_new_cstr(mrb, errbuf));
       }
     }
     
@@ -238,10 +346,10 @@ static void *thread_icmp_reply_catcher(void *v)
     
     FD_ZERO(&rfds);
     
-    for(i = 0; i< args->state->icmp_socks_count; i++){
-      FD_SET(args->state->icmp_socks[i].socket, &rfds);
-      if( args->state->icmp_socks[i].socket > maxfd ){
-        maxfd = args->state->icmp_socks[i].socket + 1;
+    for(i = 0; i< args->state->capture_sockets_count; i++){
+      FD_SET(args->state->capture_sockets[i].socket, &rfds);
+      if( args->state->capture_sockets[i].socket > maxfd ){
+        maxfd = args->state->capture_sockets[i].socket + 1;
       }
     }
     
@@ -253,8 +361,8 @@ static void *thread_icmp_reply_catcher(void *v)
     }
     
     if( ret > 0 ){
-      for(i = 0; i< args->state->icmp_socks_count; i++){
-        int sock = args->state->icmp_socks[i].socket;
+      for(i = 0; i< args->state->capture_sockets_count; i++){
+        int sock = args->state->capture_sockets[i].socket;
         
         if( FD_ISSET(sock, &rfds) ){
           while(1){
@@ -315,14 +423,12 @@ static void *thread_icmp_reply_catcher(void *v)
   return NULL;
 }
 
-static libnet_t *l;
-
 static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
 {
   struct state *st = DATA_PTR(self);
   mrb_int count, timeout, delay;
   mrb_value ret_value;
-  int i, ai, c;
+  int i, ai;
   uint16_t j;
     
   int replies_index = 0;
@@ -365,19 +471,23 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
     // for each "tick" send one icmp for each defined target
     // and then sleep
     for(i = 0; i< st->targets_count; i++){
-      int k;
       int sending_socket = -1;
       uint16_t reply_id;
       mrb_value key, arr;
-      struct sockaddr_in dst_addr;
       struct ping_reply *reply = &replies[replies_index];
       libnet_ptag_t t;
+      libnet_t *l;
+      const char *device = NULL;
       
+#ifdef SO_BINDTODEVICE
+      device = st->targets[i].device;
+#endif
       
-      // prepare destination address
-      bzero(&dst_addr, sizeof(dst_addr));
-      dst_addr.sin_family = AF_INET;
-      dst_addr.sin_addr.s_addr = st->targets[i].in_addr;
+      l = find_libnet_context(st, device);
+      if( l == NULL ){
+        printf("fatal error, no context for device '%s', exiting.\n", device);
+        exit(1);
+      }
       
       reply_id = st->targets[i].uid;
       if( reply_id == 0 ){
@@ -390,7 +500,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       
       reply->id = reply_id;
       reply->seq = j + 1;
-      reply->addr = dst_addr.sin_addr.s_addr;
+      reply->addr = st->targets[i].in_addr;
       // printf("saved sent_at for seq %d\n", j);
 
       mrb_ary_set(mrb, arr, j, mrb_nil_value());
@@ -413,53 +523,54 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
         goto error;
       }
       
-      t = libnet_autobuild_ipv4(
-          LIBNET_IPV4_H + LIBNET_ICMPV4_ECHO_H + 0, /* length */
-          IPPROTO_ICMP,                         /* protocol */
-          dst_addr.sin_addr.s_addr,             /* destination IP */
-          l
-        );
+      if( st->targets[i].in_addr_src != 0 ){
+        t = libnet_build_ipv4(
+            /* ip packet length */  LIBNET_IPV4_H + LIBNET_ICMPV4_ECHO_H + 0,
+            /* tos */               0,
+            /* id */                libnet_get_prand(LIBNET_PRu16),
+            /* frag */              0,
+            /* ttl */               100,
+            /* protocol */          IPPROTO_ICMP,
+            /* checksum */          0,
+            /* src IP */            st->targets[i].in_addr_src,
+            /* dst IP */            st->targets[i].in_addr,
+            /* payload */           NULL,
+            /* payload size */      0,
+            /* libnet handle */     l,
+            /* libnet ptag */       0
+          );
+        
+      } else {
+        t = libnet_autobuild_ipv4(
+            LIBNET_IPV4_H + LIBNET_ICMPV4_ECHO_H + 0, /* length */
+            IPPROTO_ICMP,                         /* protocol */
+            st->targets[i].in_addr,               /* destination IP */
+            l
+          );
+        
+      }
       
       if( t == -1 ){
         printf("Can't build IP header: %s\n", libnet_geterror(l));
         goto error;
       }
       
-      // find the right socket
-      for(k = 0; k< st->icmp_socks_count; k++){
-        if( st->icmp_socks[k].rtable == st->targets[i].rtable ){
-          sending_socket = st->icmp_socks[k].socket;
-          break;
-        }
-      }
       
+      sending_socket = libnet_getfd(l);
+
       if( sending_socket != -1 ){
-        uint32_t len, packet_size;
-        uint8_t *p = NULL;
-        uint8_t packet[1000];
+        
+#ifdef SO_RTABLE
+        if( setsockopt(ret, SOL_SOCKET, SO_RTABLE, &st->targets[i].rtable, sizeof(st->targets[i].rtable)) == -1 ){
+          perror("setsockopt(SO_RTABLE) ");
+        }
+#endif
         
         // send the icmp packet
         replies_index++;
         
-        c = libnet_pblock_coalesce(l, &p, &len);
-        if( c == -1 ){
-          printf("Cannot create packet: %s\n", libnet_geterror(l));
-          goto error;
-        }
-        
-        packet_size = len - LIBNET_IPV4_H;
-        memcpy(packet, p + LIBNET_IPV4_H, len - LIBNET_IPV4_H);
-        libnet_clear_packet(l);
-        free(p);
-        
-        if (sendto(sending_socket, packet, packet_size, 0, (struct sockaddr *)&dst_addr, sizeof(struct sockaddr)) >= 0)  {
-          gettimeofday(&reply->sent_at, NULL);
-        }
-        else {
-          if((errno != EHOSTDOWN) && (errno != EHOSTUNREACH)){
-            printf("sendto(dst: %s) error: %s\n", inet_ntoa(dst_addr.sin_addr), strerror(errno));
-          }
-          // mrb_raisef(mrb, E_RUNTIME_ERROR, "unable to send ICMP packet: %S", strerror(errno));
+        if( libnet_write(l) < 0 ){
+          printf("writing packet failed: %s\n", libnet_geterror(l));
         }
       }
       
@@ -516,11 +627,4 @@ void mruby_ping_init_icmp(mrb_state *mrb)
   mrb_define_method(mrb, class, "_send_pings", ping_send_pings,  MRB_ARGS_REQ(1));
     
   mrb_gc_arena_restore(mrb, ai);
-  
-  // use LINET_NONE since we use our own sockets
-  l = libnet_init(LIBNET_NONE, NULL, errbuf);
-  if( l == NULL ){
-    printf("libnet_init() failed: %s\n", errbuf);
-    exit(1);
-  }
 }
