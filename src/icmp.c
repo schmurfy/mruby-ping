@@ -575,6 +575,8 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
         else {
           printf("writing packet failed: %s\n", libnet_geterror(l));
         }
+        
+        libnet_clear_packet(l);
       }
       
       mrb_gc_arena_restore(mrb, ai);
