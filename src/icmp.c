@@ -569,7 +569,10 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
         // send the icmp packet
         replies_index++;
         
-        if( libnet_write(l) < 0 ){
+        if( libnet_write(l) >= 0 ){
+          gettimeofday(&reply->sent_at, NULL);
+        }
+        else {
           printf("writing packet failed: %s\n", libnet_geterror(l));
         }
       }
