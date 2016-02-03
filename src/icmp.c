@@ -143,7 +143,7 @@ static libnet_t *find_libnet_context(struct state *st, const char *device)
     
     // a libnet context already exists for this device, returns it and stop searching
     // if a device was not specified, take the first one
-    if( !device[0] || !strcmp(context_device, device) ){
+    if( !device || !strcmp(context_device, device) ){
       ret = st->libnet_contexts[i];
       break;
     }
