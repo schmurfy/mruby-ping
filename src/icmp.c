@@ -561,7 +561,7 @@ static mrb_value ping_send_pings(mrb_state *mrb, mrb_value self)
       if( sending_socket != -1 ){
         
 #ifdef SO_RTABLE
-        if( setsockopt(ret, SOL_SOCKET, SO_RTABLE, &st->targets[i].rtable, sizeof(st->targets[i].rtable)) == -1 ){
+        if( setsockopt(sending_socket, SOL_SOCKET, SO_RTABLE, &st->targets[i].rtable, sizeof(st->targets[i].rtable)) == -1 ){
           perror("setsockopt(SO_RTABLE) ");
         }
 #endif

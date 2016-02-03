@@ -12,6 +12,7 @@
 #include <netdb.h>
 #include <errno.h>
 
+#include <sys/socket.h>
 #include <arpa/inet.h>
 #include <net/if.h>
 
@@ -21,9 +22,9 @@ struct target_address {
   uint32_t  rtable;
   uint16_t  uid;
 
-#ifdef SO_BINDTODEVICE
+//#ifdef SO_BINDTODEVICE
   char      device[IFNAMSIZ];
-#endif
+//#endif
 };
 
 // shared
