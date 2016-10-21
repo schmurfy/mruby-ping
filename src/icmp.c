@@ -143,7 +143,7 @@ static libnet_t *find_libnet_context(struct state *st, const char *device)
     
     // a libnet context already exists for this device, returns it and stop searching
     // if a device was not specified, take the first one
-    if( !device || !strcmp(context_device, device) ){
+    if( !device || (strlen(device) == 0) || !strcmp(context_device, device) ){
       ret = st->libnet_contexts[i];
       break;
     }
@@ -173,7 +173,7 @@ static int init_libnet_context(mrb_state *mrb, struct state *st, const char *dev
       }
       
 #ifdef SO_BINDTODEVICE
-      if( strlen(device) > 0 ){
+      if( device && strlen(device) > 0 ){
         if( setsockopt(libnet_getfd(l), SOL_SOCKET, SO_BINDTODEVICE, device, strlen(device) + 1) == -1 ){
           perror("setsockopt(SO_BINDTODEVICE) ");
         }
