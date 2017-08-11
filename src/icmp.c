@@ -348,7 +348,7 @@ static void *thread_icmp_reply_catcher(void *v)
     
     for(i = 0; i< args->state->capture_sockets_count; i++){
       FD_SET(args->state->capture_sockets[i].socket, &rfds);
-      if( args->state->capture_sockets[i].socket > maxfd ){
+      if( args->state->capture_sockets[i].socket >= maxfd ){
         maxfd = args->state->capture_sockets[i].socket + 1;
       }
     }
