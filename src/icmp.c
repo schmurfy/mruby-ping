@@ -242,8 +242,11 @@ static mrb_value ping_set_targets(mrb_state *mrb, mrb_value self)
     mrb_value r_addr = mrb_ary_ref(mrb, arr2, 0);
     mrb_value r_rtable = mrb_ary_ref(mrb, arr2, 1);
     mrb_value r_uid = mrb_ary_ref(mrb, arr2, 2);
-    mrb_value r_ifname = mrb_ary_ref(mrb, arr2, 3);
     mrb_value r_src_addr = mrb_ary_ref(mrb, arr2, 4);
+    
+#ifdef SO_BINDTODEVICE
+    mrb_value r_ifname = mrb_ary_ref(mrb, arr2, 3);
+#endif
     
     if( !mrb_string_p(r_addr) ){
       mrb_raisef(mrb, E_TYPE_ERROR, "can't convert %s into String", mrb_obj_classname(mrb, r_addr));
