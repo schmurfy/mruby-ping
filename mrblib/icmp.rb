@@ -55,8 +55,12 @@ class ICMPPinger
         end
       end
       
-      # [host, sum / latencies.size(), (loss / latencies.size()) * 100]
-      ret2[host] = [sum / latencies.size(), (loss / latencies.size()) * 100, {}]
+      if latencies.all?{|n| n == nil }
+        ret2[host] = [nil, (loss / latencies.size()) * 100, {}]
+      else
+        ret2[host] = [sum / latencies.size(), (loss / latencies.size()) * 100, {}]
+      end
+      
       unless wanted_percentiles.empty?
         percentiles(latencies, wanted_percentiles).each do |arr|
           p, val = *arr
